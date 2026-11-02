@@ -99,8 +99,8 @@ export function DashboardView() {
   }, [stats]);
 
   const ownershipOption = useMemo<echarts.EChartsCoreOption>(() => {
-    // v3：电子版 / 纸质版 改三态后新增「待确认」桶（任一形态为「不确定」的记录）
-    const order = ['仅电子版', '两者都有', '仅纸质版', '都没有', '待确认'];
+    // v5（R5）：两字段交叉图简化为单字段四态分布（皆无 / 仅电子 / 仅纸质 / 双有）
+    const order = ['皆无', '仅电子', '仅纸质', '双有'];
     const map = new Map(stats.ownership.map((o) => [o.name, o.value]));
     const data = order.map((name) => ({ name, value: map.get(name) ?? 0 }));
     return {
@@ -208,7 +208,7 @@ export function DashboardView() {
         <div className="iw-chart-card">
           <div className="iw-chart-card-head">
             <div className="iw-chart-title">拥有形态</div>
-            <div className="iw-chart-note">仅电子版 / 两者都有 / 仅纸质版 / 都没有 / 待确认</div>
+            <div className="iw-chart-note">皆无 / 仅电子 / 仅纸质 / 双有</div>
           </div>
           <Chart option={ownershipOption} />
         </div>

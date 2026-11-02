@@ -30,13 +30,18 @@ describe('hash 路由解析', () => {
     expect(parseHash('#/trash').view).toBe('list');
   });
 
-  it('解析多选筛选与布尔三态（v3：电子版/纸质版为枚举多选）', () => {
-    const r = parseHash('#/list?brand=品牌甲~品牌乙&cat=女装&elec=有~不确定&paper=没有&done=1');
+  it('v5：解析多选筛选与布尔三态（拥有形态为单个多选）', () => {
+    const r = parseHash('#/list?brand=品牌甲~品牌乙&cat=女装&own=电子版~纸质版&done=1');
     expect(r.filters.品牌).toEqual(['品牌甲', '品牌乙']);
     expect(r.filters.分类).toEqual(['女装']);
-    expect(r.filters.电子版).toEqual(['有', '不确定']);
-    expect(r.filters.纸质版).toEqual(['没有']);
+    expect(r.filters.拥有形态).toEqual(['电子版', '纸质版']);
     expect(r.filters.做过).toBe(true);
+  });
+
+  it('v5：旧的 elec / paper 参数不再被识别', () => {
+    const r = parseHash('#/list?elec=有&paper=有');
+    expect(r.filters.拥有形态).toEqual([]);
+    expect((r.filters as unknown as Record<string, unknown>).电子版).toBeUndefined();
   });
 
   it('解析搜索词、排序与页码', () => {
@@ -64,8 +69,7 @@ describe('hash 路由构造与往返', () => {
       filters: filters({
         品牌: ['品牌甲', '品牌乙'],
         分类: ['女装'],
-        电子版: ['有'],
-        纸质版: ['没有'],
+        拥有形态: ['电子版'],
       }),
       query: '羊毛 外套',
       sort: { key: '名称' as const, dir: 'asc' as const },
@@ -75,11 +79,22 @@ describe('hash 路由构造与往返', () => {
     const back = parseHash(hash);
     expect(back.filters.品牌).toEqual(['品牌甲', '品牌乙']);
     expect(back.filters.分类).toEqual(['女装']);
-    expect(back.filters.电子版).toEqual(['有']);
-    expect(back.filters.纸质版).toEqual(['没有']);
+    expect(back.filters.拥有形态).toEqual(['电子版']);
     expect(back.query).toBe('羊毛 外套');
     expect(back.sort).toEqual({ key: '名称', dir: 'asc' });
     expect(back.page).toBe(4);
+  });
+
+  it('v5：拥有形态多选在 hash 中往返一致（含「任意拥有」）', () => {
+    const original = {
+      view: 'list' as const,
+      filters: filters({ 拥有形态: ['电子版', '任意拥有'] }),
+      query: '',
+      sort: { key: '更新时间' as const, dir: 'desc' as const },
+      page: 1,
+    };
+    const back = parseHash(buildHash(original));
+    expect(back.filters.拥有形态).toEqual(['电子版', '任意拥有']);
   });
 
   it('详情页路径带记录 ID', () => {

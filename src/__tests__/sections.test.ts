@@ -26,9 +26,8 @@ describe('五分区版面契约', () => {
     expect(sectionOfField('款式')).toBe('基础信息');
     expect(sectionOfField('季节')).toBe('基础信息');
     expect(sectionOfField('教程')).toBe('拥有形态');
-    expect(sectionOfField('电子版')).toBe('拥有形态');
+    expect(sectionOfField('拥有形态')).toBe('拥有形态');
     expect(sectionOfField('电子版尺码组')).toBe('拥有形态');
-    expect(sectionOfField('纸质版')).toBe('拥有形态');
     expect(sectionOfField('纸质版尺码')).toBe('拥有形态');
     expect(sectionOfField('推荐')).toBe('状态及评价');
     expect(sectionOfField('做过')).toBe('状态及评价');

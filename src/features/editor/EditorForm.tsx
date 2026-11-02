@@ -6,13 +6,18 @@
  *   · 「系统信息」分区在表单页只读展示（记录ID / 创建时间 / 更新时间），不参与编辑与提交
  * v3（需求 5 / 6 / 7）：季节为下拉单选；电子版 / 纸质版由复选框改为下拉单选（有 / 没有 / 不确定）
  * v3：枚举字段的「空值默认」改为显式声明（schema.FIELD_DEFAULTS），不再取「最后一个选项」
+ *
+ * v5（R4 / R5）：
+ *   · 「拥有形态」分区由两个下拉（电子版 / 纸质版）改为单个多选（0–2 项），空 = 两者皆无
+ *   · 「纸质版尺码」新增录入快捷标签（字母码 XS–4XL / 身高码 100–180 步长 10），
+ *     点选即填、仍可自由补充；历史 40 条记录原样保留
  */
 
 import { useMemo, useState } from 'react';
 import { useApp } from '../../store/store';
 import { navigate } from '../../router';
 import type { FieldDef, RecordItem } from '../../types';
-import { defaultValueFor } from '../../schema';
+import { defaultValueFor, PAPER_SIZE_HEIGHT_TAGS, PAPER_SIZE_LETTER_TAGS } from '../../schema';
 import { buildSectionPlan } from '../../sections';
 import { formatTime } from '../detail/DetailView';
 
@@ -155,7 +160,7 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
         const list = (value as string[]) ?? [];
         const options = f.options ?? [];
         return (
-          <div className="iw-chip-group">
+          <div className="iw-chip-group" role="group" aria-label={f.label}>
             {options.map((o) => (
               <button
                 key={o}
@@ -185,6 +190,14 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
       }
       case 'tags': {
         const list = (value as string[]) ?? [];
+        // v5（R4）：纸质版尺码的录入快捷标签 —— 字母码 XS–4XL / 身高码 100–180（步长 10）
+        // 点选即填（再点一次取消），仍可自由补充；历史 40 条记录原样保留，不做迁移。
+        const quickGroups = f.key === '纸质版尺码'
+          ? [
+            { label: '字母码', tags: PAPER_SIZE_LETTER_TAGS },
+            { label: '身高码', tags: PAPER_SIZE_HEIGHT_TAGS },
+          ]
+          : [];
         return (
           <>
             <div className="iw-chip-group" style={{ marginBottom: 8 }}>
@@ -203,6 +216,28 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
                 </span>
               ))}
             </div>
+            {quickGroups.map((g) => (
+              <div className="iw-quick-tags" key={g.label}>
+                <span className="iw-quick-tags-label">{g.label}</span>
+                <div className="iw-chip-group">
+                  {g.tags.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={`iw-chip iw-chip-quick${list.includes(t) ? ' iw-chip-on' : ''}`}
+                      onClick={() => setValue(
+                        f.jsonKey,
+                        list.includes(t) ? list.filter((x) => x !== t) : [...list, t],
+                      )}
+                      aria-pressed={list.includes(t)}
+                      aria-label={`${f.label} 快捷${g.label} ${t}`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
             <div style={{ display: 'flex', gap: 8 }}>
               <input
                 className="iw-input"

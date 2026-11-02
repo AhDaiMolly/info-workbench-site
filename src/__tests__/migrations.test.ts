@@ -1,20 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import {
   CURRENT_SCHEMA_VERSION, applyMigrations, findLegacyFieldKeys, findShellRecords, isShellRecord,
-  isValidatableRecord, migrate_1_to_2, migrate_2_to_3, nextRecordId, normalizeOwnershipValue,
-  normalizeToCurrent, validateRecords,
+  isValidatableRecord, migrate_1_to_2, migrate_2_to_3, migrate_3_to_4, nextRecordId,
+  normalizeOwnershipFormats, normalizeOwnershipValue, normalizeToCurrent, validateRecords,
 } from '../store/migrations';
 import { DEFAULT_SCHEMA } from '../schema';
 import type { RecordItem, Schema } from '../types';
 
 /** 虚构占位数据，站点仓内不得出现真实记录值。 */
 
-/** v3 结构的记录（电子版 / 纸质版 为枚举三态；无「电子版缺码」「关联」） */
+/** v5 当前结构的记录（拥有形态为多选数组；无「电子版」「纸质版」旧键） */
 function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
   const { id, ...rest } = over;
   return {
     id,
     名称: `记录-${over.id}`,
+    品牌: '品牌甲',
+    分类: [],
+    款式: '',
+    季节: '',
+    教程: '未知',
+    电子版尺码组: [],
+    拥有形态: [],
+    纸质版尺码: [],
+    推荐: '未评价',
+    做过: false,
+    想做: '未标记',
+    备注: '',
+    创建时间: '2026-01-01T00:00:00.000Z',
+    更新时间: '2026-01-01T00:00:00.000Z',
+    ...rest,
+  } as RecordItem;
+}
+
+/** v3 结构的记录（电子版 / 纸质版 为枚举三态；无「电子版缺码」「关联」） */
+function makeV3Record(over: Record<string, unknown> & { id: number }): RecordItem {
+  const { id, ...rest } = over;
+  return {
+    id,
+    名称: `记录-${id}`,
     品牌: '品牌甲',
     分类: [],
     款式: '',
@@ -31,10 +55,10 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     创建时间: '2026-01-01T00:00:00.000Z',
     更新时间: '2026-01-01T00:00:00.000Z',
     ...rest,
-  } as RecordItem;
+  } as unknown as RecordItem;
 }
 
-/** v4 之前的旧结构记录：布尔拥有形态 + 已删除字段 */
+/** v1 旧结构记录：布尔拥有形态 + 已删除字段 */
 function makeLegacyRecord(over: Record<string, unknown> & { id: number }): RecordItem {
   const { id, ...rest } = over;
   return {
@@ -62,16 +86,21 @@ function makeLegacyRecord(over: Record<string, unknown> & { id: number }): Recor
   } as unknown as RecordItem;
 }
 
+/** 取记录上的任意键（绕过类型约束，用于断言中间迁移态） */
+function raw(r: RecordItem, key: string): unknown {
+  return (r as unknown as Record<string, unknown>)[key];
+}
+
 describe('结构版本迁移 v1 → v2', () => {
   it('布尔拥有形态迁移为枚举三态（true → 有）', () => {
     const out = migrate_1_to_2([makeLegacyRecord({ id: 1, 拥有电子版: true })], DEFAULT_SCHEMA);
-    expect(out[0].电子版).toBe('有');
-    expect((out[0] as unknown as Record<string, unknown>).拥有电子版).toBeUndefined();
+    expect(raw(out[0], '电子版')).toBe('有');
+    expect(raw(out[0], '拥有电子版')).toBeUndefined();
   });
 
   it('布尔拥有形态迁移为枚举三态（false → 没有）', () => {
     const out = migrate_1_to_2([makeLegacyRecord({ id: 1, 拥有纸质版: false })], DEFAULT_SCHEMA);
-    expect(out[0].纸质版).toBe('没有');
+    expect(raw(out[0], '纸质版')).toBe('没有');
   });
 
   it('旧记录缺字段时落到第三态「不确定」', () => {
@@ -79,21 +108,20 @@ describe('结构版本迁移 v1 → v2', () => {
     delete (rec as unknown as Record<string, unknown>).拥有电子版;
     delete (rec as unknown as Record<string, unknown>).拥有纸质版;
     const out = migrate_1_to_2([rec], DEFAULT_SCHEMA);
-    expect(out[0].电子版).toBe('不确定');
-    expect(out[0].纸质版).toBe('不确定');
+    expect(raw(out[0], '电子版')).toBe('不确定');
+    expect(raw(out[0], '纸质版')).toBe('不确定');
   });
 
   it('删除「关联」与「电子版缺码」', () => {
     const out = migrate_1_to_2([makeLegacyRecord({ id: 1, 关联: [2], 电子版缺码: true })], DEFAULT_SCHEMA);
-    const rec = out[0] as unknown as Record<string, unknown>;
-    expect('关联' in rec).toBe(false);
-    expect('电子版缺码' in rec).toBe(false);
+    expect('关联' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
+    expect('电子版缺码' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
   });
 
   it('不覆盖已有取值', () => {
     const out = migrate_1_to_2([makeLegacyRecord({ id: 1, 品牌: '品牌乙', 拥有电子版: true })], DEFAULT_SCHEMA);
     expect(out[0].品牌).toBe('品牌乙');
-    expect(out[0].电子版).toBe('有');
+    expect(raw(out[0], '电子版')).toBe('有');
   });
 
   it('补齐缺失字段的默认值', () => {
@@ -101,13 +129,13 @@ describe('结构版本迁移 v1 → v2', () => {
     const out = migrate_1_to_2([partial], DEFAULT_SCHEMA);
     expect(out[0].分类).toEqual([]);
     expect(out[0].纸质版尺码).toEqual([]);
-    expect(out[0].电子版).toBe('不确定');
+    expect(raw(out[0], '电子版')).toBe('不确定');
     expect(out[0].品牌).toBe('');
     expect(out[0].名称).toBe('条目一');
   });
 
   it('迁移是纯函数且幂等：两次执行结果完全一致', () => {
-    const recs = [makeLegacyRecord({ id: 1, 拥有电子版: true }), makeRecord({ id: 2 })];
+    const recs = [makeLegacyRecord({ id: 1, 拥有电子版: true }), makeV3Record({ id: 2 })];
     const a = migrate_1_to_2(recs, DEFAULT_SCHEMA);
     const b = migrate_1_to_2(a, DEFAULT_SCHEMA);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
@@ -170,7 +198,7 @@ describe('结构版本迁移 v1 → v2', () => {
       records: [makeLegacyRecord({ id: 1, 拥有电子版: true })],
     }, DEFAULT_SCHEMA);
     expect(res.changed).toBe(true);
-    expect(res.records[0].电子版).toBe('有');
+    expect(res.records[0].拥有形态).toEqual(['电子版']);
   });
 });
 
@@ -183,7 +211,7 @@ describe('结构归一（normalizeToCurrent）', () => {
   it('旧结构就地修正为当前结构', () => {
     const recs = [makeLegacyRecord({ id: 1, 拥有电子版: true, 关联: [2] })];
     const out = normalizeToCurrent(recs, DEFAULT_SCHEMA);
-    expect(out[0].电子版).toBe('有');
+    expect(out[0].拥有形态).toEqual(['电子版']);
     expect('关联' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
   });
 });
@@ -194,6 +222,11 @@ describe('旧字段扫描（写回闸门用）', () => {
     const keys = findLegacyFieldKeys(recs).sort();
     // 旧键（已改名）与已删除字段都会被报出来 —— 写回闸门据此拦截
     expect(keys).toEqual(['关联', '拥有电子版', '拥有纸质版', '电子版缺码']);
+  });
+
+  it('v5：R5 合并前的「电子版 / 纸质版」旧键也会被报出来（数据仓未迁移时拦写回）', () => {
+    const recs = [makeV3Record({ id: 1, 电子版: '有', 纸质版: '没有' })];
+    expect(findLegacyFieldKeys(recs).sort()).toEqual(['电子版', '纸质版']);
   });
 
   it('当前结构无旧键', () => {
@@ -208,6 +241,19 @@ describe('拥有形态取值归一', () => {
     expect(normalizeOwnershipValue('')).toBe('');
     expect(normalizeOwnershipValue('有')).toBe('有');
     expect(normalizeOwnershipValue('半成品')).toBe('不确定');
+  });
+
+  it('v5：旧两态 → 拥有形态多选（双射，四种组合各对应一个取值）', () => {
+    expect(normalizeOwnershipFormats('有', '有')).toEqual(['电子版', '纸质版']);
+    expect(normalizeOwnershipFormats('有', '没有')).toEqual(['电子版']);
+    expect(normalizeOwnershipFormats('没有', '有')).toEqual(['纸质版']);
+    expect(normalizeOwnershipFormats('没有', '没有')).toEqual([]);
+  });
+
+  it('v5：「不确定」映射为不选（取消第三态）', () => {
+    expect(normalizeOwnershipFormats('不确定', '不确定')).toEqual([]);
+    expect(normalizeOwnershipFormats('不确定', '有')).toEqual(['纸质版']);
+    expect(normalizeOwnershipFormats('', '')).toEqual([]);
   });
 });
 
@@ -233,9 +279,19 @@ describe('写回前校验', () => {
     expect(issues.some((i) => i.字段 === '季节')).toBe(true);
   });
 
-  it('电子版 / 纸质版 取值不在三态内时报错', () => {
-    const issues = validateRecords([makeRecord({ id: 1, 电子版: '也许' })], DEFAULT_SCHEMA);
-    expect(issues.some((i) => i.字段 === '电子版')).toBe(true);
+  it('v5：「拥有形态」取值不在选项集内时报错', () => {
+    const issues = validateRecords([makeRecord({ id: 1, 拥有形态: ['打印版'] })], DEFAULT_SCHEMA);
+    expect(issues.some((i) => i.字段 === '拥有形态')).toBe(true);
+  });
+
+  it('v5：「拥有形态」多值顺序未按固定选项序排列时报错', () => {
+    const issues = validateRecords([makeRecord({ id: 1, 拥有形态: ['纸质版', '电子版'] })], DEFAULT_SCHEMA);
+    expect(issues.some((i) => i.字段 === '拥有形态' && i.问题.includes('顺序'))).toBe(true);
+  });
+
+  it('v5：「拥有形态」顺序正确时通过', () => {
+    const issues = validateRecords([makeRecord({ id: 1, 拥有形态: ['电子版', '纸质版'] })], DEFAULT_SCHEMA);
+    expect(issues.length).toBe(0);
   });
 
   it('多值顺序不符合固定选项序时报错', () => {
@@ -282,14 +338,13 @@ describe('新记录 ID 分配', () => {
 
 describe('v4：写回校验只针对有效记录（同步阻断根因回归）', () => {
   it('空壳记录（名称为空）不参与写回校验 —— 不再阻断同步', () => {
-    // 复现用户遇到的情形：远端/本地存在一条「只填了品牌、名称留空」的导入遗留记录
     const shell = makeRecord({ id: 795, 名称: '', 品牌: '品牌甲' });
     const issues = validateRecords([makeRecord({ id: 1 }), shell], DEFAULT_SCHEMA);
     expect(issues.length).toBe(0);
   });
 
   it('空壳记录不参与校验，但同名空白的其它字段仍然会报（只放行名称空这一项）', () => {
-    const shell = makeRecord({ id: 795, 名称: '', 电子版: '也许' });
+    const shell = makeRecord({ id: 795, 名称: '' });
     const issues = validateRecords([shell], DEFAULT_SCHEMA);
     expect(issues.length).toBe(0);
   });
@@ -377,8 +432,95 @@ describe('v4：结构版本迁移 schemaVersion 2 → 3（回收站移除）', (
     const out = normalizeToCurrent([rec], DEFAULT_SCHEMA);
     expect('deletedAt' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
   });
+});
 
-  it('CURRENT_SCHEMA_VERSION = 3', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(3);
+/* ========================================================================
+ * v5（R5）：结构版本迁移 schemaVersion 3 → 4（「拥有形态」合并）
+ * ======================================================================== */
+
+describe('v5：R5 归一是双射（两态口径下可逆、零丢失）', () => {
+  it('四种组合各映射到唯一取值', () => {
+    const cases: Array<[string, string, string[]]> = [
+      ['有', '有', ['电子版', '纸质版']],
+      ['有', '没有', ['电子版']],
+      ['没有', '有', ['纸质版']],
+      ['没有', '没有', []],
+    ];
+    for (const [e, p, expected] of cases) {
+      expect(normalizeOwnershipFormats(e, p)).toEqual(expected);
+    }
+    // 四个取值互不相同 —— 映射是单射
+    const distinct = new Set(cases.map(([e, p]) => normalizeOwnershipFormats(e, p).join('|')));
+    expect(distinct.size).toBe(4);
+  });
+
+  it('migrate_3_to_4：旧两键 → 拥有形态，并删除旧键', () => {
+    const out = migrate_3_to_4([makeV3Record({ id: 1, 电子版: '有', 纸质版: '没有' })], DEFAULT_SCHEMA);
+    expect(out[0].拥有形态).toEqual(['电子版']);
+    expect('电子版' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
+    expect('纸质版' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  it('migrate_3_to_4：双有 → 两个取值，顺序按固定选项序', () => {
+    const out = migrate_3_to_4([makeV3Record({ id: 1, 电子版: '有', 纸质版: '有' })], DEFAULT_SCHEMA);
+    expect(out[0].拥有形态).toEqual(['电子版', '纸质版']);
+  });
+
+  it('migrate_3_to_4：「不确定」映射为不选（取消第三态）', () => {
+    const out = migrate_3_to_4([makeV3Record({ id: 1, 电子版: '不确定', 纸质版: '不确定' })], DEFAULT_SCHEMA);
+    expect(out[0].拥有形态).toEqual([]);
+  });
+
+  it('migrate_3_to_4：已是新结构时原样保留（幂等）', () => {
+    const rec = makeRecord({ id: 1, 拥有形态: ['电子版'] });
+    const out = migrate_3_to_4([rec], DEFAULT_SCHEMA);
+    expect(out[0].拥有形态).toEqual(['电子版']);
+  });
+
+  it('migrate_3_to_4：幂等 —— 连续两次执行结果完全一致', () => {
+    const recs = [
+      makeV3Record({ id: 1, 电子版: '有', 纸质版: '有' }),
+      makeV3Record({ id: 2, 电子版: '没有', 纸质版: '没有' }),
+      makeRecord({ id: 3, 拥有形态: ['纸质版'] }),
+    ];
+    const a = migrate_3_to_4(recs, DEFAULT_SCHEMA);
+    const b = migrate_3_to_4(a, DEFAULT_SCHEMA);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it('旧键兼容加载：normalizeToCurrent 会把旧两键归一（数据仓未迁移时页面照常可用）', () => {
+    const out = normalizeToCurrent([makeV3Record({ id: 1, 电子版: '有', 纸质版: '有' })], DEFAULT_SCHEMA);
+    expect(out[0].拥有形态).toEqual(['电子版', '纸质版']);
+    expect('电子版' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  it('旧键兼容加载：v1 布尔旧键经完整链路后落到拥有形态', () => {
+    const out = normalizeToCurrent([makeLegacyRecord({ id: 1, 拥有电子版: true, 拥有纸质版: false })], DEFAULT_SCHEMA);
+    expect(out[0].拥有形态).toEqual(['电子版']);
+  });
+
+  it('applyMigrations：schemaVersion 3 → 4 并标记 changed', () => {
+    const res = applyMigrations({
+      schemaVersion: 3, dataVersion: 1, updatedAt: '',
+      records: [makeV3Record({ id: 1, 电子版: '有', 纸质版: '没有' })],
+    }, DEFAULT_SCHEMA);
+    expect(res.schemaVersion).toBe(4);
+    expect(res.changed).toBe(true);
+    expect(res.records[0].拥有形态).toEqual(['电子版']);
+  });
+
+  it('合并后的字段集：旧两键不再出现在记录里', () => {
+    const res = applyMigrations({
+      schemaVersion: 3, dataVersion: 1, updatedAt: '',
+      records: [makeV3Record({ id: 1 })],
+    }, DEFAULT_SCHEMA);
+    const keys = Object.keys(res.records[0] as unknown as Record<string, unknown>);
+    expect(keys).not.toContain('电子版');
+    expect(keys).not.toContain('纸质版');
+    expect(keys).toContain('拥有形态');
+  });
+
+  it('CURRENT_SCHEMA_VERSION = 4', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(4);
   });
 });

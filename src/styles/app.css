@@ -582,3 +582,21 @@
   .iw-form-grid .iw-span-2 { grid-column: span 1; }
   .iw-banner { flex-direction: column; }
 }
+
+/* ------------------------------------------------------------------ */
+/* v5（R1 / R2 / R4）：列表派生列、标签单元与录入快捷标签                */
+/* ------------------------------------------------------------------ */
+.iw-icon-cell { display: inline-flex; align-items: center; gap: 4px; }
+.iw-icon-cell-item { line-height: 1; font-size: 14px; }
+.iw-icon-negative { color: var(--iw-text-3); }
+.iw-tag-cell { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.iw-tag-pill {
+  display: inline-flex; align-items: center;
+  padding: 1px 7px; border-radius: 10px;
+  background: var(--iw-surface-2, #f2f3f5);
+  font-size: 12px; line-height: 18px; white-space: nowrap;
+}
+.iw-tag-more { font-size: 12px; color: var(--iw-text-3); white-space: nowrap; }
+.iw-quick-tags { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.iw-quick-tags-label { font-size: 12px; color: var(--iw-text-3); min-width: 36px; }
+.iw-chip-quick { padding: 2px 9px; font-size: 12px; }

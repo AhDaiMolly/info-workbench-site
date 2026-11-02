@@ -26,9 +26,8 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     款式: '',
     季节: '',
     教程: '未知',
-    电子版: '不确定',
+    拥有形态: [],
     电子版尺码组: [],
-    纸质版: '不确定',
     纸质版尺码: [],
     推荐: '未评价',
     做过: false,
@@ -36,7 +35,6 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     备注: '',
     创建时间: '2026-01-01T00:00:00.000Z',
     更新时间: '2026-01-01T00:00:00.000Z',
-    deletedAt: null,
     ...rest,
   } as RecordItem;
 }

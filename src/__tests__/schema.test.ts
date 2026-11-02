@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CATEGORY_ORDER, DEFAULT_SCHEMA, FIELD_DEFAULTS, OWNERSHIP_OPTIONS, REMOVED_FIELD_KEYS,
+  CATEGORY_ORDER, DEFAULT_SCHEMA, DEFAULT_VISIBLE_COLUMNS, DERIVED_LIST_COLUMNS, FIELD_DEFAULTS,
+  OWNERSHIP_ANY, OWNERSHIP_FORMAT_OPTIONS, OWNERSHIP_FILTER_OPTIONS, OWNERSHIP_TRISTATE_OPTIONS,
+  PAPER_SIZE_HEIGHT_TAGS, PAPER_SIZE_LETTER_TAGS, REMOVED_FIELD_KEYS,
   SEASON_OPTIONS, defaultValueFor, mergeSchema, stripLegacyOptions,
 } from '../schema';
 import type { FieldDef, Schema } from '../types';
 
 /**
- * v3 的 schema 侧规则：
+ * v5 的 schema 侧规则：
+ *   · 结构版本 3 → 4：「电子版」「纸质版」两个枚举三态合并为单个多选「拥有形态」
  *   · 已删除字段（电子版缺码 / 关联）不进入 schema
- *   · 旧键（拥有电子版 / 拥有纸质版）由内置 v3 定义接管
+ *   · 远端旧键（电子版 / 纸质版 / 拥有电子版 / 拥有纸质版）一律不采纳，由内置 v5 定义接管
  *   · 远端非法字段类型回落为内置类型（历史遗留的 "季节" 类型）
  *   · 旧取值「通用」不再提供
- *   · schemaVersion 以当前代码为准
+ *   · 列表默认列固定为 8 列（R1）
  */
 
 function remoteField(over: Partial<FieldDef> & { key: string }): FieldDef {
@@ -19,8 +22,8 @@ function remoteField(over: Partial<FieldDef> & { key: string }): FieldDef {
 }
 
 describe('内置 schema', () => {
-  it('当前结构版本为 3（v4：回收站移除）', () => {
-    expect(DEFAULT_SCHEMA.schemaVersion).toBe(3);
+  it('当前结构版本为 4（v5：拥有形态合并）', () => {
+    expect(DEFAULT_SCHEMA.schemaVersion).toBe(4);
   });
 
   it('不含已删除字段', () => {
@@ -28,12 +31,32 @@ describe('内置 schema', () => {
     for (const k of REMOVED_FIELD_KEYS) expect(keys).not.toContain(k);
   });
 
-  it('不含旧键名，改用电子版 / 纸质版', () => {
+  it('v5：含「拥有形态」多选，不含旧的两个单选键', () => {
     const keys = DEFAULT_SCHEMA.fields.map((f) => f.key);
-    expect(keys).toContain('电子版');
-    expect(keys).toContain('纸质版');
+    expect(keys).toContain('拥有形态');
+    expect(keys).not.toContain('电子版');
+    expect(keys).not.toContain('纸质版');
     expect(keys).not.toContain('拥有电子版');
     expect(keys).not.toContain('拥有纸质版');
+  });
+
+  it('v5：「拥有形态」为多选，选项为 电子版 / 纸质版（取消「不确定」）', () => {
+    const f = DEFAULT_SCHEMA.fields.find((x) => x.key === '拥有形态')!;
+    expect(f.type).toBe('multi');
+    expect(f.options).toEqual(OWNERSHIP_FORMAT_OPTIONS);
+    expect(OWNERSHIP_FORMAT_OPTIONS).toEqual(['电子版', '纸质版']);
+    expect(OWNERSHIP_FORMAT_OPTIONS).not.toContain('不确定');
+  });
+
+  it('v5：旧三态仅供迁移层使用，不进入选项集', () => {
+    expect(OWNERSHIP_TRISTATE_OPTIONS).toEqual(['有', '没有', '不确定']);
+    const own = DEFAULT_SCHEMA.fields.find((f) => f.key === '拥有形态')!;
+    expect(own.options).not.toContain('不确定');
+  });
+
+  it('v5：筛选项含保留值「任意拥有」', () => {
+    expect(OWNERSHIP_ANY).toBe('任意拥有');
+    expect(OWNERSHIP_FILTER_OPTIONS).toEqual(['电子版', '纸质版', '任意拥有']);
   });
 
   it('季节为枚举单选，选项含「春秋」且不拆分', () => {
@@ -43,15 +66,6 @@ describe('内置 schema', () => {
     expect(SEASON_OPTIONS).toContain('春秋');
   });
 
-  it('电子版 / 纸质版 为枚举三态', () => {
-    for (const key of ['电子版', '纸质版']) {
-      const f = DEFAULT_SCHEMA.fields.find((x) => x.key === key)!;
-      expect(f.type).toBe('enum');
-      expect(f.options).toEqual(OWNERSHIP_OPTIONS);
-      expect(OWNERSHIP_OPTIONS).toEqual(['有', '没有', '不确定']);
-    }
-  });
-
   it('分类选项不再含「通用」', () => {
     expect(CATEGORY_ORDER).not.toContain('通用');
     const cat = DEFAULT_SCHEMA.fields.find((f) => f.key === '分类')!;
@@ -59,15 +73,60 @@ describe('内置 schema', () => {
   });
 });
 
+describe('v5 · R1 列表默认列', () => {
+  it('默认 8 列：名称 / 品牌 / 分类 / 款式 / 季节 / 形态 / 教程 / 标记', () => {
+    expect(DEFAULT_VISIBLE_COLUMNS).toEqual([
+      '名称', '品牌', '分类', '款式', '季节', '形态', '教程', '标记',
+    ]);
+    expect(DEFAULT_VISIBLE_COLUMNS.length).toBe(8);
+  });
+
+  it('「形态」「标记」是派生列，不是数据字段', () => {
+    expect(DERIVED_LIST_COLUMNS).toEqual(['形态', '标记']);
+    const keys = DEFAULT_SCHEMA.fields.map((f) => f.key);
+    expect(keys).not.toContain('形态');
+    expect(keys).not.toContain('标记');
+  });
+
+  it('R3：尺码与备注收进详情页，不在默认列里', () => {
+    expect(DEFAULT_VISIBLE_COLUMNS).not.toContain('电子版尺码组');
+    expect(DEFAULT_VISIBLE_COLUMNS).not.toContain('纸质版尺码');
+    expect(DEFAULT_VISIBLE_COLUMNS).not.toContain('备注');
+    // 但字段仍在 schema 中（详情页 / 筛选 / 导出仍然可用）
+    const keys = DEFAULT_SCHEMA.fields.map((f) => f.key);
+    expect(keys).toContain('电子版尺码组');
+    expect(keys).toContain('纸质版尺码');
+    expect(keys).toContain('备注');
+  });
+});
+
+describe('v5 · R4 纸质版尺码快捷标签', () => {
+  it('字母码 XS–4XL', () => {
+    expect(PAPER_SIZE_LETTER_TAGS).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+  });
+
+  it('身高码 100–180 步长 10', () => {
+    expect(PAPER_SIZE_HEIGHT_TAGS[0]).toBe('100');
+    expect(PAPER_SIZE_HEIGHT_TAGS[PAPER_SIZE_HEIGHT_TAGS.length - 1]).toBe('180');
+    expect(PAPER_SIZE_HEIGHT_TAGS.length).toBe(9);
+    for (let i = 1; i < PAPER_SIZE_HEIGHT_TAGS.length; i += 1) {
+      expect(Number(PAPER_SIZE_HEIGHT_TAGS[i]) - Number(PAPER_SIZE_HEIGHT_TAGS[i - 1])).toBe(10);
+    }
+  });
+});
+
 describe('取值默认', () => {
-  it('枚举字段取显式默认值', () => {
-    expect(FIELD_DEFAULTS.电子版).toBe('不确定');
-    expect(FIELD_DEFAULTS.纸质版).toBe('不确定');
+  it('枚举字段取显式默认值（旧的两个单选键不再有默认值）', () => {
     expect(FIELD_DEFAULTS.教程).toBe('未知');
+    expect(FIELD_DEFAULTS.推荐).toBe('未评价');
+    expect(FIELD_DEFAULTS.想做).toBe('未标记');
+    expect(FIELD_DEFAULTS.电子版).toBeUndefined();
+    expect(FIELD_DEFAULTS.纸质版).toBeUndefined();
   });
 
   it('defaultValueFor 按类型给出默认', () => {
     expect(defaultValueFor({ key: '分类', jsonKey: '分类', type: 'multi', label: '分类' })).toEqual([]);
+    expect(defaultValueFor({ key: '拥有形态', jsonKey: '拥有形态', type: 'multi', label: '拥有形态' })).toEqual([]);
     expect(defaultValueFor({ key: '纸质版尺码', jsonKey: '纸质版尺码', type: 'tags', label: '纸质版尺码' })).toEqual([]);
     expect(defaultValueFor({ key: '做过', jsonKey: '做过', type: 'boolean', label: '做过' })).toBe(false);
     expect(defaultValueFor({ key: '记录ID', jsonKey: 'id', type: 'number', label: '记录ID' })).toBe(0);
@@ -97,7 +156,7 @@ describe('远端 schema 合并', () => {
     expect(keys).not.toContain('关联');
   });
 
-  it('旧键名由内置定义接管（类型不被远端覆盖）', () => {
+  it('v5：远端旧键（拥有电子版 / 拥有纸质版）由内置定义接管', () => {
     const remote: Partial<Schema> = {
       fields: [
         remoteField({ key: '拥有电子版', type: 'boolean' }),
@@ -108,9 +167,23 @@ describe('远端 schema 合并', () => {
     const keys = merged.fields.map((f) => f.key);
     expect(keys).not.toContain('拥有电子版');
     expect(keys).not.toContain('拥有纸质版');
-    const e = merged.fields.find((f) => f.key === '电子版')!;
-    expect(e.type).toBe('enum');
-    expect(e.options).toEqual(OWNERSHIP_OPTIONS);
+    const own = merged.fields.find((f) => f.key === '拥有形态')!;
+    expect(own.type).toBe('multi');
+    expect(own.options).toEqual(OWNERSHIP_FORMAT_OPTIONS);
+  });
+
+  it('v5：远端仍带「电子版 / 纸质版」旧键时一律不采纳（合并字段集唯一）', () => {
+    const remote: Partial<Schema> = {
+      fields: [
+        remoteField({ key: '电子版', type: 'enum', options: ['有', '没有', '不确定'] }),
+        remoteField({ key: '纸质版', type: 'enum', options: ['有', '没有', '不确定'] }),
+      ],
+    };
+    const merged = mergeSchema(DEFAULT_SCHEMA, remote);
+    const keys = merged.fields.map((f) => f.key);
+    expect(keys).not.toContain('电子版');
+    expect(keys).not.toContain('纸质版');
+    expect(keys.filter((k) => k === '拥有形态').length).toBe(1);
   });
 
   it('远端非法类型回落到内置类型（历史遗留的 "季节"）', () => {
@@ -139,7 +212,7 @@ describe('远端 schema 合并', () => {
 
   it('schemaVersion 以当前代码为准（不被远端写低）', () => {
     const remote: Partial<Schema> = { schemaVersion: 1, fields: [remoteField({ key: '名称' })] };
-    expect(mergeSchema(DEFAULT_SCHEMA, remote).schemaVersion).toBe(3);
+    expect(mergeSchema(DEFAULT_SCHEMA, remote).schemaVersion).toBe(4);
   });
 
   it('远端 schemaVersion 更高时也不采纳（避免把版本号写低）', () => {

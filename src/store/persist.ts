@@ -14,7 +14,7 @@
  * ⚠️ 令牌永不写入 URL / 日志 / commit message / 导出文件 / 构建产物。
  */
 
-import type { ActionLogEntry, FilterPreset, RecordItem, RepoConfig, Schema, SortSpec } from '../types';
+import type { ActionLogEntry, FilterPreset, Filters, RecordItem, RepoConfig, Schema, SortSpec } from '../types';
 import { LEGACY_FIELD_ALIAS, REMOVED_FIELD_KEYS } from '../schema';
 
 export const STORAGE_KEYS = {
@@ -198,9 +198,11 @@ export interface PendingQueue {
 export function readPending(): PendingQueue {
   const raw = readJson<PendingQueue>(STORAGE_KEYS.pending, safeStorage('local')) ?? { baseSha: null, changes: [] };
   // v3：待同步队列里记录的字段名同步改名 / 剔除（仅影响界面展示的字段清单）
+  // v5（R5）：被合并的旧键（电子版 / 纸质版）统一显示为「拥有形态」
   raw.changes = (raw.changes ?? []).map((c) => ({
     ...c,
-    字段: (c.字段 ?? []).map((f) => (f in LEGACY_FIELD_ALIAS ? LEGACY_FIELD_ALIAS[f] : f))
+    字段: (c.字段 ?? [])
+      .map((f) => normalizeFieldLabel(f))
       .filter((f) => !REMOVED_FIELD_KEYS.includes(f)),
   }));
   return raw;
@@ -214,13 +216,43 @@ export function clearPending(): void {
   removeKey(STORAGE_KEYS.pending, safeStorage('local'));
 }
 
-/* ---------------------- 旧字段名归一（v3 兼容） ---------------------- */
+/* ------------------ 旧字段名归一（v3 兼容 + v5 合并兼容） ------------------ */
+
+/**
+ * v5（R5）：被「拥有形态」合并掉的旧键 → 新字段名。
+ *
+ * 迁移链是两级：先走 v3 的改名表（拥有电子版 → 电子版），再走本表（电子版 → 拥有形态）。
+ */
+const MERGED_TO_NEW_KEY: Record<string, string> = {
+  电子版: '拥有形态',
+  纸质版: '拥有形态',
+};
+
+/**
+ * v5（R1）：旧列表列名 → 新列表列名。
+ *
+ * 旧版列表里的「电子版」「纸质版」两列在新模型下由派生列「形态」统一承载，
+ * 因此映射到「形态」而不是新字段名「拥有形态」（后者不是数据列）。
+ */
+const LEGACY_COLUMN_ALIAS: Record<string, string> = {
+  电子版: '形态',
+  纸质版: '形态',
+  拥有电子版: '形态',
+  拥有纸质版: '形态',
+};
+
+/** 字段标签归一：v3 改名 → v5 合并 */
+export function normalizeFieldLabel(f: unknown): string {
+  if (typeof f !== 'string') return '';
+  const aliased = f in LEGACY_FIELD_ALIAS ? LEGACY_FIELD_ALIAS[f] : f;
+  return aliased in MERGED_TO_NEW_KEY ? MERGED_TO_NEW_KEY[aliased] : aliased;
+}
 
 /**
  * 把界面偏好里的旧字段名换成新字段名：
- *   · 「拥有电子版」→「电子版」、「拥有纸质版」→「纸质版」
+ *   · 「拥有电子版」→「电子版」→「拥有形态」（v5 合并）
  *   · 「电子版缺码」「关联」已删除 → 直接剔除
- * 目的：老用户浏览器里的本地偏好不会因为改名而失效，也不会出现「选了一个已删除的列」。
+ * 目的：老用户浏览器里的本地偏好不会因为改名 / 合并而失效，也不会出现「选了一个已删除的列」。
  */
 export function normalizeLegacyNames(input: unknown): unknown {
   if (Array.isArray(input)) {
@@ -246,6 +278,69 @@ export function normalizeLegacyNames(input: unknown): unknown {
   return input;
 }
 
+/**
+ * v5：列清单归一。
+ *
+ * 旧偏好里的「电子版」「纸质版」（或更早的「拥有电子版」「拥有纸质版」）列
+ * 映射到派生列「形态」；同一列只保留一次，保持原有顺序。
+ */
+export function normalizeColumns(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  for (const v of input) {
+    if (typeof v !== 'string') continue;
+    if (REMOVED_FIELD_KEYS.includes(v)) continue;
+    const aliased = v in LEGACY_FIELD_ALIAS ? LEGACY_FIELD_ALIAS[v] : v;
+    const key = aliased in LEGACY_COLUMN_ALIAS ? LEGACY_COLUMN_ALIAS[aliased] : aliased;
+    if (!out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
+/** 旧三态取值（'有' / '没有' / '不确定'）里只有 '有' 能表达「拥有」 */
+function legacyOwnershipPicked(v: unknown): boolean {
+  const vals = Array.isArray(v)
+    ? v.map((x) => String(x))
+    : (typeof v === 'boolean' ? [v ? '有' : '没有'] : []);
+  return vals.includes('有');
+}
+
+/**
+ * v5（R5）：筛选条件归一 —— 旧的两个单选筛选合并为「拥有形态」多选。
+ *
+ *   · 电子版 = ['有']      → 拥有形态 含「电子版」
+ *   · 纸质版 = ['有']      → 拥有形态 含「纸质版」
+ *   · 电子版 = ['没有']    → 无法表达（新模型里「没有电子版」＝不含该项），丢弃
+ *   · 电子版 = ['不确定']  → 同上，丢弃（v5 取消「不确定」态）
+ *
+ * 已经是新格式的「拥有形态」原样保留（并与旧键合并去重）。
+ */
+export function normalizeFilters(input: unknown): Filters {
+  const out: Record<string, unknown> = {};
+  if (!input || typeof input !== 'object') return out as unknown as Filters;
+  const src = input as Record<string, unknown>;
+  const ownership: string[] = [];
+  for (const [k, v] of Object.entries(src)) {
+    if (REMOVED_FIELD_KEYS.includes(k)) continue;
+    const aliased = k in LEGACY_FIELD_ALIAS ? LEGACY_FIELD_ALIAS[k] : k;
+    if (aliased === '电子版' || aliased === '纸质版') {
+      if (legacyOwnershipPicked(v)) {
+        const target = aliased === '电子版' ? '电子版' : '纸质版';
+        if (!ownership.includes(target)) ownership.push(target);
+      }
+      continue;
+    }
+    if (aliased === '拥有形态') {
+      const vals = Array.isArray(v) ? v.map((x) => String(x)) : [];
+      for (const x of vals) if (!ownership.includes(x)) ownership.push(x);
+      continue;
+    }
+    out[aliased] = v;
+  }
+  if (ownership.length) out['拥有形态'] = ownership;
+  return out as unknown as Filters;
+}
+
 /* ------------------------------ 界面偏好 ------------------------------ */
 
 export interface Prefs {
@@ -258,11 +353,12 @@ export interface Prefs {
 export function readPrefs(): Partial<Prefs> {
   const raw = readJson<Partial<Prefs>>(STORAGE_KEYS.prefs, safeStorage('local')) ?? {};
   // v3：列名与筛选方案里的旧字段名统一改名，已删除字段剔除
-  if (raw.columns) raw.columns = normalizeLegacyNames(raw.columns) as string[];
+  // v5：列表列「电子版 / 纸质版」并入派生列「形态」；旧的两个单选筛选并入「拥有形态」多选
+  if (raw.columns) raw.columns = normalizeColumns(raw.columns);
   if (raw.presets) {
     raw.presets = raw.presets.map((p) => ({
       ...p,
-      filters: normalizeLegacyNames(p.filters) as FilterPreset['filters'],
+      filters: normalizeFilters(p.filters),
     }));
   }
   return raw;

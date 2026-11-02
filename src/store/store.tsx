@@ -405,12 +405,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       const now = new Date().toISOString();
       const id = nextRecordId(st.records, st.lastIssuedId);
-      // v3：字段改名后的新结构；「电子版」「纸质版」默认为第三态「不确定」
+      // v5（R5）：「电子版」「纸质版」合并为「拥有形态」多选，新建默认为空数组（皆无）
       const base: RecordItem = {
         id,
         名称: name, 品牌: '', 分类: [], 款式: '', 季节: '', 教程: '未知',
-        电子版: '不确定', 电子版尺码组: [],
-        纸质版: '不确定', 纸质版尺码: [], 推荐: '未评价', 做过: false,
+        电子版尺码组: [],
+        拥有形态: [], 纸质版尺码: [], 推荐: '未评价', 做过: false,
         想做: '未标记', 备注: '',
         创建时间: now, 更新时间: now,
       } as RecordItem;
@@ -648,11 +648,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const remoteRecords = remoteParsed.records ?? [];
         let records = st.records;
 
-        // v3 写回闸门：远端若仍带旧字段（关联 / 电子版缺码），写回会把这些列静默抹掉。
-        // 必须先由数据仓迁移脚本完成「归档旧字段取值 + 结构迁移」，才允许写回。
+        // v3/v5 写回闸门：远端若仍带旧字段（关联 / 电子版缺码 / 电子版 / 纸质版），
+        // 写回会把这些列静默抹掉。必须先由数据仓迁移脚本完成「归档旧字段取值 + 结构迁移」，
+        // 才允许写回。
         const legacyKeys = findLegacyFieldKeys(remoteRecords);
         if (legacyKeys.length) {
-          const msg = `远端数据仍包含已废弃字段（${legacyKeys.join('、')}），写回会覆盖掉这些历史取值。请先执行数据仓 v3 迁移（归档旧字段后再写回），再同步。`;
+          const msg = `远端数据仍包含已废弃字段（${legacyKeys.join('、')}），写回会覆盖掉这些历史取值。请先执行数据仓迁移（归档旧字段后再写回），再同步。`;
           dispatch({ type: 'SET_SYNC', status: 'error', message: msg });
           dispatch({
             type: 'SET_NOTICE',

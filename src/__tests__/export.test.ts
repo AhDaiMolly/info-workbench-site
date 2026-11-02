@@ -19,9 +19,8 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     款式: '',
     季节: '',
     教程: '未知',
-    电子版: '不确定',
+    拥有形态: [],
     电子版尺码组: [],
-    纸质版: '不确定',
     纸质版尺码: [],
     推荐: '未评价',
     做过: false,
@@ -36,12 +35,12 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
 const records: RecordItem[] = [
   makeRecord({
     id: 1, 名称: '条目一', 品牌: '品牌甲', 分类: ['女装'], 款式: '衬衣', 季节: '夏',
-    教程: '有', 电子版: '有', 纸质版: '没有', 电子版尺码组: ['女士全码'], 推荐: '推荐', 做过: true,
+    教程: '有', 拥有形态: ['电子版'], 电子版尺码组: ['女士全码'], 推荐: '推荐', 做过: true,
     想做: '想做', 备注: '第一行备注',
   }),
   makeRecord({
-    id: 2, 名称: '条目二', 品牌: '品牌乙', 分类: ['女装', '男装'], 电子版: '没有',
-    纸质版: '有', 纸质版尺码: ['S', 'M'], 备注: '第二行备注'
+    id: 2, 名称: '条目二', 品牌: '品牌乙', 分类: ['女装', '男装'], 拥有形态: ['电子版', '纸质版'],
+    纸质版尺码: ['S', 'M'], 备注: '第二行备注'
   }),
 ];
 
@@ -97,23 +96,27 @@ describe('导出列与行（AC-14）', () => {
     expect(cols[cols.length - 1]).toBe('更新时间');
   });
 
-  it('多值以「、」分隔、拥有形态按枚举原样导出', () => {
+  it('多值以「、」分隔', () => {
     const rows = buildExportRows(records, DEFAULT_SCHEMA);
     expect(rows[0].分类).toBe('女装');
     expect(rows[1].分类).toBe('女装、男装');
-    expect(rows[0].电子版).toBe('有');
-    expect(rows[1].电子版).toBe('没有');
-    expect(rows[1].纸质版).toBe('有');
     expect(rows[1].纸质版尺码).toBe('S、M');
   });
 
-  it('导出列不再包含已删除字段', () => {
+  it('v5（R5）：导出列用「拥有形态」替代旧的两个单选列', () => {
     const cols = exportColumns(DEFAULT_SCHEMA);
+    expect(cols).toContain('拥有形态');
+    expect(cols).not.toContain('电子版');
+    expect(cols).not.toContain('纸质版');
     expect(cols).not.toContain('电子版缺码');
     expect(cols).not.toContain('关联');
     expect(cols).not.toContain('拥有电子版');
-    expect(cols).toContain('电子版');
-    expect(cols).toContain('纸质版');
+  });
+
+  it('v5（R5）：拥有形态多值按「、」导出，顺序稳定', () => {
+    const rows = buildExportRows(records, DEFAULT_SCHEMA);
+    expect(rows[0].拥有形态).toBe('电子版');
+    expect(rows[1].拥有形态).toBe('电子版、纸质版');
   });
 
   it('行数等于记录数', () => {
@@ -131,6 +134,7 @@ describe('Excel 导出', () => {
     expect(rows.length).toBe(2);
     expect(String(rows[0]['名称'])).toBe('条目一');
     expect(String(rows[1]['分类'])).toBe('女装、男装');
+    expect(String(rows[1]['拥有形态'])).toBe('电子版、纸质版');
   });
 
   it('附带看板统计工作表', () => {
@@ -143,7 +147,7 @@ describe('Excel 导出', () => {
       styleOther: 0,
       season: [],
       seasonBlank: 1,
-      ownership: [{ name: '仅电子版', value: 1 }],
+      ownership: [{ name: '仅电子', value: 1 }],
       completion: [{ name: '做过', value: 1 }],
     });
     const buf = buildXlsxBuffer(records, DEFAULT_SCHEMA, statsRows);
@@ -153,6 +157,28 @@ describe('Excel 导出', () => {
     const rows = XLSX.utils.sheet_to_json<Record<string, string>>(s);
     expect(rows.length).toBe(statsRows.length);
     expect(rows[0]['维度']).toBe('品牌分布');
+  });
+
+  it('v5：看板统计里的拥有形态维度为四态口径', () => {
+    const rows = buildStatsRows({
+      brand: [],
+      brandOther: 0,
+      category: [],
+      categoryUncategorized: 0,
+      style: [],
+      styleOther: 0,
+      season: [],
+      seasonBlank: 0,
+      ownership: [
+        { name: '皆无', value: 737 },
+        { name: '仅电子', value: 22 },
+        { name: '仅纸质', value: 2 },
+        { name: '双有', value: 37 },
+      ],
+      completion: [],
+    });
+    expect(rows.map((r) => r['项目'])).toEqual(['皆无', '仅电子', '仅纸质', '双有']);
+    expect(rows[0]['维度']).toBe('拥有形态');
   });
 
   it('统计行按维度分组且带未分类/未填归集', () => {

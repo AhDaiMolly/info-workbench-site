@@ -12,10 +12,15 @@
  *   · 删除「电子版缺码」相关索引与筛选（原统计口径整体移除）
  *   · 拥有形态看板新增「待确认」桶：电子版/纸质版 任一为「不确定」的记录单独归集，
  *     不混入「都没有」（否则三态信息被布尔口径吃掉）
+ *
+ * v5 变更（R5）：
+ *   · 「电子版 / 纸质版」两个三态单选 → 单个「拥有形态」多选，索引与筛选口径同步改写
+ *   · 筛选语义为「包含」：选中「电子版」= 拥有形态含「电子版」；「任意拥有」= 拥有形态非空
+ *   · 看板「拥有形态分布」改为单字段四态：皆无 / 仅电子 / 仅纸质 / 双有（不再有「待确认」桶）
  */
 
 import type { Filters, RecordItem, SortSpec } from '../types';
-import { CATEGORY_ORDER, SIZE_GROUP_ORDER } from '../schema';
+import { CATEGORY_ORDER, OWNERSHIP_ANY, SIZE_GROUP_ORDER } from '../schema';
 
 /* ------------------------------- 全文索引 ------------------------------- */
 
@@ -81,12 +86,12 @@ export function buildIndexes(records: RecordItem[]): Indexes {
     fieldIndex('教程', r.教程 ?? '', r.id);
     fieldIndex('推荐', r.推荐 ?? '', r.id);
     fieldIndex('想做', r.想做 ?? '', r.id);
-    fieldIndex('电子版', r.电子版 ?? '', r.id);
-    fieldIndex('纸质版', r.纸质版 ?? '', r.id);
     fieldIndex('做过', r.做过 ? '是' : '否', r.id);
     // 多值字段：选项级索引（命中任一选项即返回）
     for (const c of r.分类 ?? []) fieldIndex('分类', c, r.id);
     for (const s of r.电子版尺码组 ?? []) fieldIndex('电子版尺码组', s, r.id);
+    // v5（R5）：「拥有形态」多选，按选项级索引
+    for (const o of r.拥有形态 ?? []) fieldIndex('拥有形态', o, r.id);
 
     const blob = searchBlob(r);
     blobs.set(r.id, blob);
@@ -109,9 +114,16 @@ export function matchesFilters(r: RecordItem, f: Filters): boolean {
   // 分类：命中任一选项即返回
   if (f.分类.length && !(r.分类 ?? []).some((c) => f.分类.includes(c))) return false;
   if (f.电子版尺码组.length && !(r.电子版尺码组 ?? []).some((s) => f.电子版尺码组.includes(s))) return false;
-  // 枚举多选：命中任一取值即返回
-  if (f.电子版.length && !f.电子版.includes(r.电子版 ?? '')) return false;
-  if (f.纸质版.length && !f.纸质版.includes(r.纸质版 ?? '')) return false;
+  // v5（R5）：「拥有形态」多选 —— 「包含」语义
+  //   · 选中「电子版」/「纸质版」：该形态必须拥有（多项同时选中 = 都要有，即「双有」）
+  //   · 选中「任意拥有」：拥有形态非空
+  // 语义与旧的两个下拉等价（旧模型两个下拉之间是 AND），且额外支持「任意拥有」。
+  if (f.拥有形态.length) {
+    const own = r.拥有形态 ?? [];
+    const formats = f.拥有形态.filter((o) => o !== OWNERSHIP_ANY);
+    if (formats.length && !formats.every((o) => own.includes(o))) return false;
+    if (f.拥有形态.includes(OWNERSHIP_ANY) && own.length === 0) return false;
+  }
   // 布尔三态
   if (f.做过 !== undefined && r.做过 !== f.做过) return false;
   return true;
@@ -122,7 +134,7 @@ export function hasActiveFilters(f: Filters): boolean {
   return Boolean(
     f.品牌.length || f.分类.length || f.款式.length || f.季节.length || f.教程.length
     || f.推荐.length || f.想做.length || f.电子版尺码组.length
-    || f.电子版.length || f.纸质版.length
+    || f.拥有形态.length
     || f.做过 !== undefined,
   );
 }
@@ -276,16 +288,14 @@ export function computeStats(records: RecordItem[]): Stats {
     .map((name) => ({ name, value: seasonMap.get(name) ?? 0 }));
   const seasonBlank = seasonMap.get('') ?? 0;
 
-  // 拥有形态：三态口径 → 四类确定态 + 一个「待确认」桶
-  const hasE = (r: RecordItem) => (r.电子版 ?? '') === '有';
-  const hasP = (r: RecordItem) => (r.纸质版 ?? '') === '有';
-  const unknown = (r: RecordItem) => (r.电子版 ?? '') === '不确定' || (r.纸质版 ?? '') === '不确定';
+  // v5（R5）：拥有形态由两字段三态 → 单字段四态（皆无 / 仅电子 / 仅纸质 / 双有）
+  const ownsE = (r: RecordItem) => (r.拥有形态 ?? []).includes('电子版');
+  const ownsP = (r: RecordItem) => (r.拥有形态 ?? []).includes('纸质版');
   const ownership = [
-    { name: '仅电子版', value: records.filter((r) => hasE(r) && !hasP(r) && !unknown(r)).length },
-    { name: '两者都有', value: records.filter((r) => hasE(r) && hasP(r)).length },
-    { name: '仅纸质版', value: records.filter((r) => !hasE(r) && hasP(r) && !unknown(r)).length },
-    { name: '都没有', value: records.filter((r) => !hasE(r) && !hasP(r) && !unknown(r)).length },
-    { name: '待确认', value: records.filter((r) => unknown(r)).length },
+    { name: '皆无', value: records.filter((r) => !ownsE(r) && !ownsP(r)).length },
+    { name: '仅电子', value: records.filter((r) => ownsE(r) && !ownsP(r)).length },
+    { name: '仅纸质', value: records.filter((r) => !ownsE(r) && ownsP(r)).length },
+    { name: '双有', value: records.filter((r) => ownsE(r) && ownsP(r)).length },
   ];
 
   const completionMap = tallyBy(records.map((r) => r.想做 ?? ''));

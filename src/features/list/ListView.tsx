@@ -13,7 +13,8 @@ import { ColumnConfig } from './ColumnConfig';
 import { ConflictsBanner } from './ConflictsBanner';
 import { Modal } from '../../components/Modal';
 import { DEFAULT_VISIBLE_COLUMNS } from '../../schema';
-import type { SortKey } from '../../types';
+import { markIcons, ownershipIcons, tutorialIcon, tutorialIsKnown, truncateTags } from './derivedCells';
+import type { RecordItem, SortKey } from '../../types';
 
 const SORTABLE: SortKey[] = ['id', '名称', '更新时间'];
 
@@ -40,17 +41,70 @@ export function ListView() {
     else app.actions.setSort({ key, dir: key === '名称' ? 'asc' : 'desc' });
   };
 
-  const renderCell = (key: string, value: unknown) => {
-    if (key === '名称') {
+  const renderCell = (col: string, r: RecordItem) => {
+    if (col === '名称') {
       return (
         <span>
-          {highlightParts(String(value ?? ''), query).map((p, i) => (
+          {highlightParts(String(r.名称 ?? ''), query).map((p, i) => (
             p.hit ? <mark key={i} className="iw-highlight">{p.text}</mark> : <span key={i}>{p.text}</span>
           ))}
         </span>
       );
     }
-    if (key === '备注') {
+    // v5（R5）：派生列「形态」—— 拥有形态的图标组合（💾 电子 / 📄 纸质）
+    if (col === '形态') {
+      const icons = ownershipIcons(r.拥有形态);
+      if (!icons.length) return <span className="iw-cell-muted">—</span>;
+      return (
+        <span className="iw-icon-cell" title="拥有形态">
+          {icons.map((ic, i) => <span key={i} className="iw-icon-cell-item">{ic}</span>)}
+        </span>
+      );
+    }
+    // v5（R2）：派生列「标记」—— 想做 / 做过 / 推荐 的图标组合
+    if (col === '标记') {
+      const marks = markIcons(r);
+      if (!marks.length) return <span className="iw-cell-muted">—</span>;
+      return (
+        <span className="iw-icon-cell">
+          {marks.map((m, i) => (
+            <span
+              key={`${m.field}-${i}`}
+              className={`iw-icon-cell-item${m.tone === 'negative' ? ' iw-icon-negative' : ''}`}
+              title={m.field}
+            >
+              {m.char}
+            </span>
+          ))}
+        </span>
+      );
+    }
+    // v5（R1）：派生列「教程」—— 有 = ▶ / 无 = ∅ / 未知 = 灰○
+    if (col === '教程') {
+      const known = tutorialIsKnown(r.教程);
+      return (
+        <span
+          className={known ? 'iw-icon-cell-item' : 'iw-icon-cell-item iw-icon-negative'}
+          title={`教程：${String(r.教程 ?? '未知')}`}
+        >
+          {tutorialIcon(r.教程)}
+        </span>
+      );
+    }
+    // v5（R1）：分类列最多 2 个标签 + 「+n」
+    if (col === '分类') {
+      const { shown, extra } = truncateTags(r.分类);
+      if (!shown.length) return <span className="iw-cell-muted">—</span>;
+      return (
+        <span className="iw-tag-cell">
+          {shown.map((t) => <span key={t} className="iw-tag-pill">{t}</span>)}
+          {extra > 0 ? <span className="iw-tag-more">+{extra}</span> : null}
+        </span>
+      );
+    }
+    const key = col === '记录ID' ? 'id' : col;
+    const value = (r as unknown as Record<string, unknown>)[key];
+    if (col === '备注') {
       const text = String(value ?? '');
       if (!text) return <span className="iw-cell-muted">—</span>;
       return (
@@ -168,9 +222,7 @@ export function ListView() {
               </tr>
             ) : pageRows.map((r) => (
               <tr key={r.id}>
-                {visible.map((col) => {
-                  const key = col === '记录ID' ? 'id' : col;
-                  return (
+                {visible.map((col) => (
                     <td key={col} className={col === '名称' ? 'iw-col-name' : undefined}>
                       {col === '名称' ? (
                         <a
@@ -180,14 +232,13 @@ export function ListView() {
                             navigate({ view: 'detail', id: r.id, filters, query, sort });
                           }}
                         >
-                          {renderCell(col, r.名称)}
+                          {renderCell(col, r)}
                         </a>
                       ) : (
-                        renderCell(col, (r as unknown as Record<string, unknown>)[key])
+                        renderCell(col, r)
                       )}
                     </td>
-                  );
-                })}
+                  ))}
                 <td>
                   <button
                     className="iw-btn iw-btn-sm iw-btn-ghost"

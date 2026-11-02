@@ -22,6 +22,18 @@
  *   · 既有软删记录在加载时会被清掉（不可恢复，属回收站移除的既定语义）；
  *     数据仓侧另有 migrate-v4.mjs 先做归档再写回，避免静默丢弃。
  *
+ * v5（schemaVersion 3 → 4）：R5「拥有形态」合并
+ *   · 「电子版」「纸质版」两个枚举三态单选 → 单个多选「拥有形态」（选项：电子版 / 纸质版）
+ *   · 归一映射（双射、可逆、零丢失）：
+ *       有 + 有   → ['电子版', '纸质版']
+ *       有 + 没有 → ['电子版']
+ *       没有 + 有 → ['纸质版']
+ *       没有 + 没有 → []            （皆无）
+ *   · 「不确定」态随合并取消（实测 0 条在用）：映射为「不选」（该侧不计入拥有形态），
+ *     原值由数据仓侧 migrate-v5.mjs 归档，不静默丢弃
+ *   · 旧两键从记录里删除，「拥有形态」缺失时按上面的映射补齐（空数组）
+ *   · 页面侧归一是**幂等**的：数据仓尚未迁移时，旧数据也能正常显示（写回由闸门拦住）
+ *
  * ⚠️ v4 修复（同步被阻断的根因，见交付说明 v4「根因」一节）：
  *   写回校验**只针对有效记录**：
  *     · 空壳记录（名称为空）不参与校验 —— 这类记录来自最初的表格导入，
@@ -32,10 +44,11 @@
 
 import type { FieldDef, RecordItem, RecordsFile, Schema } from '../types';
 import {
-  OWNERSHIP_OPTIONS, REMOVED_FIELD_KEYS, defaultValueFor, LEGACY_MULTI_VALUES,
+  OWNERSHIP_FORMAT_OPTIONS, OWNERSHIP_TRISTATE_OPTIONS, REMOVED_FIELD_KEYS,
+  defaultValueFor, LEGACY_MULTI_VALUES, MERGED_OWNERSHIP_KEYS,
 } from '../schema';
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 /** 旧键 → 新键（布尔改枚举） */
 const LEGACY_OWNERSHIP_KEYS: Array<[string, string]> = [
@@ -52,8 +65,30 @@ export function normalizeOwnershipValue(value: unknown): string {
   if (value === false) return '没有';
   const s = String(value ?? '').trim();
   if (s === '') return '';
-  if (OWNERSHIP_OPTIONS.includes(s)) return s;
+  if (OWNERSHIP_TRISTATE_OPTIONS.includes(s)) return s;
   return '不确定';
+}
+
+/**
+ * v5（R5）：把旧的两个枚举三态归一为「拥有形态」多选。
+ *
+ * 归一是**双射**（在「有 / 没有」两态口径下）：
+ *   有   + 有   → ['电子版', '纸质版']
+ *   有   + 没有 → ['电子版']
+ *   没有 + 有   → ['纸质版']
+ *   没有 + 没有 → []
+ * 「不确定」（实测 0 条在用）→ 该侧不选；空串 / 字段缺失 → 该侧不选。
+ *
+ * 返回值始终按 OWNERSHIP_FORMAT_OPTIONS 的固定顺序，便于逐条比对与幂等校验。
+ */
+export function normalizeOwnershipFormats(
+  electronic: unknown,
+  paper: unknown,
+): string[] {
+  const out: string[] = [];
+  if (String(electronic ?? '').trim() === '有') out.push('电子版');
+  if (String(paper ?? '').trim() === '有') out.push('纸质版');
+  return out;
 }
 
 /**
@@ -126,6 +161,48 @@ export function migrate_2_to_3(records: RecordItem[], schema: Schema): RecordIte
 }
 
 /**
+ * schemaVersion 3 → 4：R5「拥有形态」合并。
+ *
+ *   · 「电子版」= 有 → 拥有形态含「电子版」；其余取值（含「不确定」/缺失）→ 不选
+ *   · 「纸质版」= 有 → 拥有形态含「纸质版」；其余取值（含「不确定」/缺失）→ 不选
+ *   · 旧两键从记录里删除
+ *
+ * 纯函数；幂等（已迁移的记录再执行一次不产生任何变化）。
+ */
+export function migrate_3_to_4(records: RecordItem[], schema: Schema): RecordItem[] {
+  return records.map((r) => {
+    const rec = r as unknown as Record<string, unknown>;
+    const out = { ...rec } as Record<string, unknown>;
+
+    const hasOldKeys = MERGED_OWNERSHIP_KEYS.some((k) => k in out);
+    const current = out.拥有形态;
+    const currentIsArray = Array.isArray(current);
+
+    if (hasOldKeys || !currentIsArray) {
+      // 旧键优先归一（数据仓尚未迁移时）；已是新结构且字段缺失 → 按缺省（皆无）处理
+      const fromOld = normalizeOwnershipFormats(out.电子版, out.纸质版);
+      const fromCurrent = currentIsArray
+        ? current.map((v) => String(v)).filter((v) => OWNERSHIP_FORMAT_OPTIONS.includes(v))
+        : [];
+      const merged = hasOldKeys ? fromOld : fromCurrent;
+      out.拥有形态 = OWNERSHIP_FORMAT_OPTIONS.filter((o) => merged.includes(o));
+    }
+
+    // 删除被合并掉的旧键
+    for (const k of MERGED_OWNERSHIP_KEYS) delete out[k];
+
+    // 其余字段按 schema 补默认值（不覆盖已有值）
+    for (const f of schema.fields) {
+      const key = f.jsonKey;
+      if (!(key in out) || out[key] === undefined || out[key] === null) {
+        out[key] = defaultValueFor(f);
+      }
+    }
+    return out as unknown as RecordItem;
+  });
+}
+
+/**
  * 结构归一（幂等）：无论文件自报的 schemaVersion 是多少，
  * 只要记录里还留着旧键/旧类型，就地修正成当前结构。
  *
@@ -133,26 +210,31 @@ export function migrate_2_to_3(records: RecordItem[], schema: Schema): RecordIte
  * 也保证「数据仓还没迁移」时页面依然可用。
  *
  * v4：顺带清掉软删残留 —— 带 deletedAt 标记的记录直接移除，其余记录删掉该键。
+ * v5：顺带把「电子版 / 纸质版」两个旧键归一为「拥有形态」。
  */
 export function normalizeToCurrent(records: RecordItem[], schema: Schema): RecordItem[] {
   const needsShapeFix = records.some((r) => {
     const rec = r as unknown as Record<string, unknown>;
     return LEGACY_OWNERSHIP_KEYS.some(([oldKey]) => oldKey in rec)
       || REMOVED_FIELD_KEYS.some((k) => k in rec)
-      || 'deletedAt' in rec;
+      || 'deletedAt' in rec
+      || MERGED_OWNERSHIP_KEYS.some((k) => k in rec);
   });
   if (!needsShapeFix) return records;
-  // ⚠️ 顺序：先做「改名」（1 → 2），再做「软删清理」（2 → 3）。
+  // ⚠️ 顺序：先做「改名」（1 → 2），再做「软删清理」（2 → 3），最后做「形态合并」（3 → 4）。
   // 反过来会踩坑 —— 2 → 3 会先给缺失字段补默认值，把布尔旧值盖成「不确定」，
-  // 旧数据里的「拥有电子版: true」就再也还原不回「有」了。
+  // 旧数据里的「拥有电子版: true」就再也还原不回「有」了；
+  // 同理 3 → 4 必须排在 1 → 2 之后，否则旧布尔值会被当成「非有」丢掉。
   const renamed = migrate_1_to_2(records, schema);
-  return migrate_2_to_3(renamed, schema);
+  const cleaned = migrate_2_to_3(renamed, schema);
+  return migrate_3_to_4(cleaned, schema);
 }
 
 const MIGRATIONS: Record<number, (records: RecordItem[], schema: Schema) => RecordItem[]> = {
   0: (records, schema) => migrate_1_to_2(records, schema),
   1: migrate_1_to_2,
   2: migrate_2_to_3,
+  3: migrate_3_to_4,
 };
 
 export interface MigrationResult {
@@ -195,14 +277,17 @@ export function applyMigrations(file: RecordsFile, schema: Schema): MigrationRes
 }
 
 /**
- * 扫描记录里仍存在的旧字段（v3 已废弃 / 已改名的键）。
- * 数据仓尚未执行 v3 迁移时，写回必须先检查这个 —— 否则会把待归档的旧数据悄悄抹掉。
+ * 扫描记录里仍存在的旧字段（v3 已废弃 / 已改名的键；v5 已合并的两个形态键）。
+ * 数据仓尚未执行对应迁移时，写回必须先检查这个 —— 否则会把待归档的旧数据悄悄抹掉。
+ *
+ * v5：命中「电子版」「纸质版」说明数据仓还没做 R5 合并迁移 —— 写回前会被拦住。
  */
 export function findLegacyFieldKeys(records: RecordItem[]): string[] {
   const hits = new Set<string>();
   for (const r of records) {
     const rec = r as unknown as Record<string, unknown>;
     for (const [oldKey] of LEGACY_OWNERSHIP_KEYS) if (oldKey in rec) hits.add(oldKey);
+    for (const k of MERGED_OWNERSHIP_KEYS) if (k in rec) hits.add(k);
     for (const k of REMOVED_FIELD_KEYS) if (k in rec) hits.add(k);
   }
   return [...hits];

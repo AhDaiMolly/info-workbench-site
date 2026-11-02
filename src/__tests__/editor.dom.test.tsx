@@ -1,8 +1,9 @@
 /**
- * v3 需求 1 / 5 / 6 / 7 的界面级验证（jsdom）：
+ * v5 需求 R4 / R5 的界面级验证（jsdom）：
  *   · 新增/编辑表单与记录详情页都按五分区排版
  *   · 季节是下拉单选，选项 夏 / 春秋 / 冬（「春秋」不拆分）
- *   · 电子版 / 纸质版 由复选框改为下拉单选，取值 有 / 没有 / 不确定
+ *   · v5（R5）：「电子版」「纸质版」两个下拉合并为单个多选「拥有形态」（0–2 项）
+ *   · v5（R4）：「纸质版尺码」提供字母码 / 身高码快捷标签，点选即填、仍可自由补充
  *   · 已删除字段（关联 / 电子版缺码）不再出现在界面上
  */
 
@@ -26,9 +27,8 @@ const sampleRecord: RecordItem = {
   款式: '外套',
   季节: '春秋',
   教程: '有',
-  电子版: '有',
+  拥有形态: ['电子版'],
   电子版尺码组: [],
-  纸质版: '没有',
   纸质版尺码: [],
   推荐: '未评价',
   做过: false,
@@ -36,7 +36,6 @@ const sampleRecord: RecordItem = {
   备注: '占位备注',
   创建时间: '2026-01-01T00:00:00.000Z',
   更新时间: '2026-01-02T00:00:00.000Z',
-  deletedAt: null,
 } as RecordItem;
 
 let records: RecordItem[] = [];
@@ -45,7 +44,10 @@ vi.mock('../store/store', () => ({
   useApp: () => ({
     records,
     schema: DEFAULT_SCHEMA,
-    filters: { 品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 想做: [], 电子版尺码组: [], 电子版: [], 纸质版: [], 做过: undefined },
+    filters: {
+      品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 想做: [],
+      电子版尺码组: [], 拥有形态: [], 做过: undefined,
+    },
     query: '',
     sort: { key: '更新时间', dir: 'desc' },
     pending: [],
@@ -117,44 +119,105 @@ describe('编辑表单：下拉单选', () => {
     expect((screen.getByLabelText('季节') as HTMLSelectElement).value).toBe('春秋');
   });
 
-  it('电子版为下拉单选（三态），不是复选框', () => {
-    const { container } = render(<EditorForm recordId={7} />);
-    const select = screen.getByLabelText('电子版') as HTMLSelectElement;
-    expect(select.tagName).toBe('SELECT');
-    expect(Array.from(select.options).map((o) => o.value)).toEqual(['', '有', '没有', '不确定']);
-    expect(container.querySelector('input[type="checkbox"][id="bool-电子版"]')).toBeNull();
-  });
-
-  it('纸质版为下拉单选（三态），不是复选框', () => {
-    const { container } = render(<EditorForm recordId={7} />);
-    const select = screen.getByLabelText('纸质版') as HTMLSelectElement;
-    expect(select.tagName).toBe('SELECT');
-    expect(Array.from(select.options).map((o) => o.value)).toEqual(['', '有', '没有', '不确定']);
-    expect(container.querySelector('input[type="checkbox"][id="bool-纸质版"]')).toBeNull();
-  });
-
-  it('新建记录时电子版 / 纸质版 默认「不确定」，季节不默认成最后一个选项', () => {
-    render(<EditorForm recordId={null} />);
-    expect((screen.getByLabelText('电子版') as HTMLSelectElement).value).toBe('不确定');
-    expect((screen.getByLabelText('纸质版') as HTMLSelectElement).value).toBe('不确定');
-    expect((screen.getByLabelText('季节') as HTMLSelectElement).value).toBe('');
-  });
-
   it('选择单选值后状态更新（单选交互）', () => {
     render(<EditorForm recordId={7} />);
-    const select = screen.getByLabelText('电子版') as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: '不确定' } });
-    expect((screen.getByLabelText('电子版') as HTMLSelectElement).value).toBe('不确定');
+    const select = screen.getByLabelText('季节') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: '冬' } });
+    expect((screen.getByLabelText('季节') as HTMLSelectElement).value).toBe('冬');
+  });
+});
+
+describe('v5 · R5 拥有形态多选', () => {
+  it('「拥有形态」渲染为多选组（不是下拉单选），选项为 电子版 / 纸质版', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    const group = container.querySelector('[role="group"][aria-label="拥有形态"]');
+    expect(group).not.toBeNull();
+    const labels = Array.from(group!.querySelectorAll('button')).map((b) => b.textContent);
+    expect(labels).toEqual(['电子版', '纸质版']);
+    expect(container.querySelector('select[aria-label="拥有形态"]')).toBeNull();
+    expect(container.querySelector('select[aria-label="电子版"]')).toBeNull();
+    expect(container.querySelector('select[aria-label="纸质版"]')).toBeNull();
   });
 
-  it('保存时把单选结果写回记录', () => {
-    render(<EditorForm recordId={7} />);
-    fireEvent.change(screen.getByLabelText('纸质版'), { target: { value: '不确定' } });
+  it('当前值回显为已选中的芯片', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    const group = container.querySelector('[role="group"][aria-label="拥有形态"]')!;
+    const chips = Array.from(group.querySelectorAll('button'));
+    expect(chips[0].getAttribute('aria-pressed')).toBe('true');
+    expect(chips[1].getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('点选新增形态、再点取消（多选交互）', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    const group = container.querySelector('[role="group"][aria-label="拥有形态"]')!;
+    const chips = Array.from(group.querySelectorAll('button'));
+    fireEvent.click(chips[1]);
+    expect(chips[1].getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(chips[1]);
+    expect(chips[1].getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('新建记录时拥有形态默认为空（皆无）', () => {
+    const { container } = render(<EditorForm recordId={null} />);
+    const group = container.querySelector('[role="group"][aria-label="拥有形态"]')!;
+    const chips = Array.from(group.querySelectorAll('button'));
+    expect(chips.every((c) => c.getAttribute('aria-pressed') === 'false')).toBe(true);
+  });
+
+  it('保存时把拥有形态数组写回记录', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    const group = container.querySelector('[role="group"][aria-label="拥有形态"]')!;
+    fireEvent.click(Array.from(group.querySelectorAll('button'))[1]);
     fireEvent.click(screen.getAllByText('保存')[0]);
     expect(updateRecordMock).toHaveBeenCalledTimes(1);
     const payload = updateRecordMock.mock.calls[0][1];
-    expect(payload.纸质版).toBe('不确定');
-    expect(payload.电子版).toBe('有');
+    expect(payload.拥有形态).toEqual(['电子版', '纸质版']);
+    expect((payload as Record<string, unknown>).电子版).toBeUndefined();
+    expect((payload as Record<string, unknown>).纸质版).toBeUndefined();
+  });
+});
+
+describe('v5 · R4 纸质版尺码快捷标签', () => {
+  it('提供字母码与身高码两组快捷标签', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    const groups = Array.from(container.querySelectorAll('.iw-quick-tags'));
+    expect(groups.length).toBe(2);
+    expect(groups[0].querySelector('.iw-quick-tags-label')?.textContent).toBe('字母码');
+    expect(groups[1].querySelector('.iw-quick-tags-label')?.textContent).toBe('身高码');
+  });
+
+  it('字母码覆盖 XS–4XL，身高码覆盖 100–180 步长 10', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    const groups = Array.from(container.querySelectorAll('.iw-quick-tags'));
+    const letters = Array.from(groups[0].querySelectorAll('button')).map((b) => b.textContent);
+    expect(letters).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+    const heights = Array.from(groups[1].querySelectorAll('button')).map((b) => b.textContent);
+    expect(heights).toEqual(['100', '110', '120', '130', '140', '150', '160', '170', '180']);
+  });
+
+  it('点选快捷标签即填入，再点一次取消', () => {
+    render(<EditorForm recordId={7} />);
+    const btn = screen.getByLabelText('纸质版尺码 快捷字母码 L');
+    fireEvent.click(btn);
+    expect(screen.getByLabelText('移除标签 L')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('移除标签 L'));
+    expect(screen.queryByLabelText('移除标签 L')).toBeNull();
+  });
+
+  it('仍可自由补充自定义尺码', () => {
+    render(<EditorForm recordId={7} />);
+    const input = screen.getByPlaceholderText('输入纸质版尺码后回车') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '165' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByLabelText('移除标签 165')).toBeTruthy();
+  });
+
+  it('保存时把快捷标签选中的值写进纸质版尺码', () => {
+    render(<EditorForm recordId={7} />);
+    fireEvent.click(screen.getByLabelText('纸质版尺码 快捷身高码 150'));
+    fireEvent.click(screen.getAllByText('保存')[0]);
+    const payload = updateRecordMock.mock.calls[0][1];
+    expect(payload.纸质版尺码).toEqual(['150']);
   });
 });
 
@@ -165,10 +228,10 @@ describe('记录详情：五分区版面', () => {
     expect(titles).toEqual(SECTION_TITLES);
   });
 
-  it('展示改名后的字段名与取值', () => {
+  it('展示 v5 字段名「拥有形态」与取值', () => {
     const { container } = render(<DetailView id={7} />);
+    expect(container.textContent).toContain('拥有形态');
     expect(container.textContent).toContain('电子版');
-    expect(container.textContent).toContain('纸质版');
     expect(container.textContent).not.toContain('拥有电子版');
     expect(container.textContent).not.toContain('拥有纸质版');
   });

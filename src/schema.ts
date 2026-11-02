@@ -19,6 +19,14 @@
  *   · 结构版本 2 → 3：删除软删除字段 deletedAt（回收站整体移除）
  *   · 「名称」仍是必填字段，但**空名称记录不再阻断同步**（见 store/migrations.ts 的
  *     validateRecords 与 isShellRecord）—— 校验只针对有效记录
+ *
+ * v5 变更摘要（R5「拥有形态」合并 + R1 列表页精简）：
+ *   · 结构版本 3 → 4：「电子版」「纸质版」两个枚举三态单选 → 单个多选「拥有形态」
+ *     （选项：电子版 / 纸质版）；「不确定」态取消，旧值映射见 store/migrations.ts
+ *   · 远端若仍带旧键（电子版 / 纸质版 / 拥有电子版 / 拥有纸质版），一律不采纳，
+ *     由内置的 v5 定义接管 —— 页面侧归一后仍可正常显示，写回闸门会拦住未迁移的数据仓
+ *   · 列表默认列改为 8 列（R1）：名称 / 品牌 / 分类 / 款式 / 季节 / 形态 / 教程 / 标记
+ *     「形态」「标记」是列表页派生列（由「拥有形态」「想做/做过/推荐」渲染），不是数据字段
  */
 
 import type { FieldDef, FieldType, Schema } from './types';
@@ -37,16 +45,31 @@ export const CATEGORY_ORDER = ['女装', '男装', '童装', '婴童'];
 export const SIZE_GROUP_ORDER = ['女士全码', '男士全码', '大小童全码', '仅小童'];
 
 /**
- * v3：电子版 / 纸质版 的枚举三态。
+ * v3 的枚举三态（有 / 没有 / 不确定）—— v5 合并后**仅供迁移层使用**。
  *
  * 取值口径说明：用户需求原文为「有 / 没有 / 不确定」。
  * 现有 schema 里「拥有电子版」「拥有纸质版」原本是 boolean（实际只有两态），
- * 第三态「不确定」为本次改造新增，目前无历史记录落在该态；
- * 迁移规则为 true → 「有」、false → 「没有」、字段缺失 → 「不确定」。
- *
- * ⚠️ 若要改用「教程」字段的写法（有 / 无 / 未知），只需改这一处常量。
+ * 第三态「不确定」为 v3 改造新增，实测 0 条记录落在该态。
  */
-export const OWNERSHIP_OPTIONS = ['有', '没有', '不确定'];
+export const OWNERSHIP_TRISTATE_OPTIONS = ['有', '没有', '不确定'];
+
+/**
+ * v5（R5）：合并后的「拥有形态」多选选项集。
+ *
+ * 「拥有形态」＝手上有哪些形态版本，空数组表示「两者皆无」（占记录 92% 以上）。
+ */
+export const OWNERSHIP_FORMAT_OPTIONS = ['电子版', '纸质版'];
+
+/**
+ * v5（R5）：筛选保留值「任意拥有」—— 拥有形态非空。
+ *
+ * 在旧的两个单选模型下「任意拥有」需要跨字段 OR 组合才能表达；
+ * 单字段多选一步到位（方案第 4 节第 4 条）。
+ */
+export const OWNERSHIP_ANY = '任意拥有';
+
+/** 筛选器里「拥有形态」的全部可选项（含保留值） */
+export const OWNERSHIP_FILTER_OPTIONS = [...OWNERSHIP_FORMAT_OPTIONS, OWNERSHIP_ANY];
 
 /** v3：季节下拉单选的选项集（由现有数据实际取值归纳；「春秋」保持独立选项） */
 export const SEASON_OPTIONS = ['夏', '春秋', '冬'];
@@ -79,9 +102,9 @@ export const DEFAULT_FIELDS: FieldDef[] = [
   { key: '款式', jsonKey: '款式', type: 'enum', label: '款式', options: [], allowNew: true },
   { key: '季节', jsonKey: '季节', type: 'enum', label: '季节', options: SEASON_OPTIONS },
   { key: '教程', jsonKey: '教程', type: 'enum', label: '教程', options: ['有', '无', '未知'] },
-  { key: '电子版', jsonKey: '电子版', type: 'enum', label: '电子版', options: OWNERSHIP_OPTIONS },
   { key: '电子版尺码组', jsonKey: '电子版尺码组', type: 'multi', label: '电子版尺码组', options: SIZE_GROUP_ORDER, ordered: true },
-  { key: '纸质版', jsonKey: '纸质版', type: 'enum', label: '纸质版', options: OWNERSHIP_OPTIONS },
+  // v5（R5）：「电子版」+「纸质版」两个枚举单选合并为单个多选字段
+  { key: '拥有形态', jsonKey: '拥有形态', type: 'multi', label: '拥有形态', options: OWNERSHIP_FORMAT_OPTIONS, ordered: true },
   { key: '纸质版尺码', jsonKey: '纸质版尺码', type: 'tags', label: '纸质版尺码' },
   { key: '推荐', jsonKey: '推荐', type: 'enum', label: '推荐', options: ['推荐', '不推荐', '未评价'] },
   { key: '做过', jsonKey: '做过', type: 'boolean', label: '做过' },
@@ -91,9 +114,35 @@ export const DEFAULT_FIELDS: FieldDef[] = [
   { key: '更新时间', jsonKey: '更新时间', type: 'datetime', label: '更新时间', readonly: true, system: true },
 ];
 
-/** 当前代码支持的数据结构版本（v4 = 移除软删除 / 回收站） */
+/**
+ * v5：被「拥有形态」合并掉的旧键。
+ *
+ * 远端 schema 若仍带这些键，一律不采纳（由内置的 v5 定义接管）；
+ * 页面侧的加载兼容会把旧键归一到「拥有形态」，写回闸门会拦住未迁移的数据仓。
+ */
+export const MERGED_OWNERSHIP_KEYS = ['电子版', '纸质版'];
+
+/**
+ * v5（R4）：纸质版尺码的录入快捷标签。
+ *
+ * 字母码 XS–4XL（成衣）；身高码 100–180、步长 10（童装）。
+ * 点选即填，仍可自由补充 —— 历史 40 条记录原样保留，不做数据迁移。
+ */
+export const PAPER_SIZE_LETTER_TAGS = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'];
+export const PAPER_SIZE_HEIGHT_TAGS = ['100', '110', '120', '130', '140', '150', '160', '170', '180'];
+
+/**
+ * v5（R1）：列表页的派生列。
+ *
+ * 这两列不是数据字段，而是由已有字段渲染出来的展示列：
+ *   · 「形态」← 拥有形态（💾 电子版 / 📄 纸质版）
+ *   · 「标记」← 想做 / 做过 / 推荐（⭐ ✓ 👍，负向为灰✕）
+ */
+export const DERIVED_LIST_COLUMNS = ['形态', '标记'];
+
+/** 当前代码支持的数据结构版本（v5 = 拥有形态合并） */
 export const DEFAULT_SCHEMA: Schema = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   appName: APP_NAME,
   fields: DEFAULT_FIELDS,
   systemFields: ['id', '创建时间', '更新时间'],
@@ -132,6 +181,8 @@ export function mergeSchema(base: Schema, remote: Partial<Schema> | null | undef
     if (REMOVED_FIELD_KEYS.includes(rf.key)) continue;
     // 旧键改名：内置的新键定义优先（类型/选项与旧字段不同，不能被远端覆盖）
     if (rf.key in LEGACY_FIELD_ALIAS) continue;
+    // v5（R5）：「电子版」「纸质版」已被合并进「拥有形态」，远端旧键一律不采纳
+    if (MERGED_OWNERSHIP_KEYS.includes(rf.key)) continue;
 
     const existing = byKey.get(rf.key);
     if (existing) {
@@ -160,9 +211,16 @@ export function mergeSchema(base: Schema, remote: Partial<Schema> | null | undef
   };
 }
 
-/** 列表默认显示的列（PRD 第 5.3 节） */
+/**
+ * 列表默认显示的列（R1 · 方案第 6 节）。
+ *
+ * 一行回答三个问题：这是什么（名称/品牌/分类/款式/季节）、
+ * 我手里有没有（形态）、我的状态与上手难度（教程/标记）。
+ * 其余字段（尺码、备注、创建/更新时间、想做/推荐的完整三态值）收进详情页；
+ * 筛选器保留全部字段。
+ */
 export const DEFAULT_VISIBLE_COLUMNS = [
-  '名称', '品牌', '分类', '款式', '季节', '教程', '推荐', '做过', '想做',
+  '名称', '品牌', '分类', '款式', '季节', '形态', '教程', '标记',
 ];
 
 /**
@@ -176,8 +234,6 @@ export const FIELD_DEFAULTS: Record<string, string> = {
   教程: '未知',
   推荐: '未评价',
   想做: '未标记',
-  电子版: '不确定',
-  纸质版: '不确定',
 };
 
 /**

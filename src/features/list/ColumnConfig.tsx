@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import type { Schema } from '../../types';
-import { DEFAULT_VISIBLE_COLUMNS } from '../../schema';
+import { DEFAULT_VISIBLE_COLUMNS, DERIVED_LIST_COLUMNS } from '../../schema';
 
 interface Props {
   schema: Schema;
@@ -13,11 +13,16 @@ interface Props {
   onChange: (columns: string[]) => void;
 }
 
-/** 列表可选列（系统字段与多值标签不进列表，避免表格过宽） */
-// v3：拥有电子版 → 电子版、拥有纸质版 → 纸质版；「电子版缺码」「关联」随字段一并移除
+/**
+ * 列表可选列（系统字段与多值标签不进列表，避免表格过宽）。
+ *
+ * v5（R1）：默认列收敛到 8 列；「形态」「标记」是派生列（由拥有形态 / 想做-做过-推荐渲染），
+ * 不在 schema.fields 里，因此这里单独放行。
+ * 其余字段（电子版尺码组 / 纸质版尺码 / 备注 / 推荐 / 做过 / 想做 / 拥有形态）仍可按需勾选。
+ */
 const LIST_COLUMNS = [
-  '名称', '品牌', '分类', '款式', '季节', '教程', '电子版', '纸质版',
-  '电子版尺码组', '推荐', '做过', '想做', '纸质版尺码', '备注',
+  '名称', '品牌', '分类', '款式', '季节', '形态', '教程', '标记',
+  '拥有形态', '电子版尺码组', '纸质版尺码', '推荐', '做过', '想做', '备注',
 ];
 
 export function ColumnConfig({ schema, visible, onChange }: Props) {
@@ -30,6 +35,10 @@ export function ColumnConfig({ schema, visible, onChange }: Props) {
       : [...effective, key];
     onChange(next.length ? next : DEFAULT_VISIBLE_COLUMNS);
   };
+
+  const available = LIST_COLUMNS.filter(
+    (c) => DERIVED_LIST_COLUMNS.includes(c) || schema.fields.some((f) => f.key === c),
+  );
 
   return (
     <div style={{ position: 'relative' }}>
@@ -59,7 +68,7 @@ export function ColumnConfig({ schema, visible, onChange }: Props) {
           >
             <div className="iw-filter-block-title">勾选要显示的列</div>
             <div className="iw-chip-group">
-              {LIST_COLUMNS.filter((c) => schema.fields.some((f) => f.key === c)).map((c) => (
+              {available.map((c) => (
                 <button
                   key={c}
                   type="button"

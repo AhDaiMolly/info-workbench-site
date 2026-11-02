@@ -13,7 +13,7 @@
  * 沿用 v3 的覆盖：列表 / 搜索 / 新增编辑表单五分区 / 详情五分区 / 看板渲染 / 导出内容
  *
  * 数据：不用线上数据仓。启动本地静态服务托管 dist/，并拦截 api.github.com 请求，
- *       返回 data/migration-v4/ 下的 v4 数据与结构，保证离线可跑、结果稳定。
+ *       返回 data/migration-v5/ 下的 v4 数据与结构，保证离线可跑、结果稳定。
  *
  * 运行：
  *   node scripts/smoke.cjs
@@ -29,9 +29,9 @@ const PUPPETEER_PATH = process.env.PUPPETEER_PATH || '/home/gem/.aily/.cli/npm/n
 const puppeteer = require(PUPPETEER_PATH);
 
 const DIST = path.resolve(__dirname, '../dist');
-const DATA_DIR = path.resolve(__dirname, '../../data/migration-v4');
-const RECORDS_FILE = 'records.v4.json';
-const SCHEMA_FILE = 'schema.v4.json';
+const DATA_DIR = path.resolve(__dirname, '../../data/migration-v5');
+const RECORDS_FILE = 'records.v5.json';
+const SCHEMA_FILE = 'schema.v5.json';
 const PORT = Number(process.env.SMOKE_PORT || 4178);
 const MOCK_SHA = '0'.repeat(40);
 
@@ -287,6 +287,8 @@ function apiPayload(name, buf) {
         season: get('fld-季节'),
         elec: get('fld-电子版'),
         paper: get('fld-纸质版'),
+        ownChips: !!document.querySelector('[role="group"][aria-label="拥有形态"]'),
+        ownOptions: Array.from(document.querySelectorAll('[role="group"][aria-label="拥有形态"] button')).map((b) => b.textContent),
         legacyRel: !!document.getElementById('fld-关联'),
         legacyMissing: !!document.getElementById('fld-电子版缺码'),
         checkboxCount: document.querySelectorAll('input[type="checkbox"]').length,
@@ -296,20 +298,18 @@ function apiPayload(name, buf) {
       selectInfo.season && selectInfo.season.tag === 'SELECT'
       && JSON.stringify(selectInfo.season.options.filter(Boolean)) === JSON.stringify(['夏', '春秋', '冬']),
       selectInfo.season ? `${selectInfo.season.tag} ${JSON.stringify(selectInfo.season.options)}` : '未找到 #fld-季节');
-    record('电子版为下拉单选且选项为 有/没有/不确定',
-      selectInfo.elec && selectInfo.elec.tag === 'SELECT'
-      && JSON.stringify(selectInfo.elec.options.filter(Boolean)) === JSON.stringify(['有', '没有', '不确定']),
-      selectInfo.elec ? `${selectInfo.elec.tag} ${JSON.stringify(selectInfo.elec.options)}` : '未找到 #fld-电子版');
-    record('纸质版为下拉单选且选项为 有/没有/不确定',
-      selectInfo.paper && selectInfo.paper.tag === 'SELECT'
-      && JSON.stringify(selectInfo.paper.options.filter(Boolean)) === JSON.stringify(['有', '没有', '不确定']),
-      selectInfo.paper ? `${selectInfo.paper.tag} ${JSON.stringify(selectInfo.paper.options)}` : '未找到 #fld-纸质版');
+    record('v5：「拥有形态」为多选组，旧的两个三态下拉已移除',
+      selectInfo.ownChips && !selectInfo.elec && !selectInfo.paper,
+      `拥有形态多选组 ${selectInfo.ownChips ? '有' : '无'}／旧下拉 电子版:${selectInfo.elec ? '有' : '无'} 纸质版:${selectInfo.paper ? '有' : '无'}`);
+    record('v5：拥有形态多选的选项为 电子版 / 纸质版',
+      Array.isArray(selectInfo.ownOptions) && selectInfo.ownOptions.join(',') === '电子版,纸质版',
+      JSON.stringify(selectInfo.ownOptions));
     record('表单已无「关联」「电子版缺码」字段',
       !selectInfo.legacyRel && !selectInfo.legacyMissing && !formText.includes('电子版缺码'),
       `关联控件 ${selectInfo.legacyRel ? '有' : '无'}／电子版缺码控件 ${selectInfo.legacyMissing ? '有' : '无'}`);
-    record('拥有形态非复选框（电子版/纸质版均为下拉）',
-      Boolean(selectInfo.elec && selectInfo.elec.tag === 'SELECT' && selectInfo.paper && selectInfo.paper.tag === 'SELECT'),
-      `页面复选框 ${selectInfo.checkboxCount} 个（属「做过」等布尔字段），电子版/纸质版为下拉单选`);
+    record('v5：拥有形态不是三态下拉（旧口径消失）',
+      !selectInfo.elec && !selectInfo.paper && selectInfo.ownChips,
+      `电子版下拉 ${selectInfo.elec ? '有' : '无'}／纸质版下拉 ${selectInfo.paper ? '有' : '无'}／拥有形态多选 ${selectInfo.ownChips ? '有' : '无'}`);
 
     /* 4. 详情页：五分区 */
     await goto('/detail/22');
@@ -419,9 +419,9 @@ function apiPayload(name, buf) {
       } catch (e) {
         columns = [];
       }
-      record('导出列含「电子版」「纸质版」',
-        columns.includes('电子版') && columns.includes('纸质版'),
-        columns.filter((c) => ['电子版', '纸质版', '拥有电子版', '拥有纸质版'].includes(c)).join('、') || '未找到');
+      record('导出列含「拥有形态」且不含旧的两个单选列（v5 合并）',
+        columns.includes('拥有形态') && !columns.includes('电子版') && !columns.includes('纸质版'),
+        columns.filter((c) => ['拥有形态', '电子版', '纸质版', '拥有电子版', '拥有纸质版'].includes(c)).join('、') || '未找到');
       record('导出列不含「关联」「电子版缺码」',
         !columns.includes('关联') && !columns.includes('电子版缺码'),
         columns.join('、').slice(0, 120));
