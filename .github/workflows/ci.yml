@@ -1,0 +1,40 @@
+name: 持续集成检查
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 依赖漏洞扫描
+        run: npm audit --audit-level=high
+
+      - name: 类型检查
+        run: npx tsc --noEmit
+
+      - name: 单元测试
+        run: npm run test
+
+      - name: 构建
+        run: npm run build
+
+      - name: 数据泄漏闸门
+        run: node scripts/check-no-data.mjs
