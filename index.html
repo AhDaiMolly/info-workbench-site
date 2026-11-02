@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="信息汇总工作台 · 个人资料记录管理工具" />
+    <!--
+      CSP（架构 7.2 第 9 条）：
+      · 运行期只允许同源脚本与样式，不加载任何第三方 CDN 脚本（避免第三方被劫持后读取 localStorage 中的令牌）
+      · 只允许连接 GitHub API
+      · 禁止 base 重定向与表单提交外发
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://api.github.com; font-src 'self'; base-uri 'self'; form-action 'none'"
+    />
+    <title>信息汇总工作台</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

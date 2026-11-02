@@ -1,0 +1,72 @@
+/* 信息汇总工作台 · 设计令牌（简约风：白底、单一主色、留白充分、无装饰性动画） */
+
+:root {
+  /* 颜色 */
+  --iw-bg: #ffffff;
+  --iw-surface: #fafafa;
+  --iw-surface-2: #f4f5f7;
+  --iw-border: #e6e8eb;
+  --iw-border-strong: #d4d7dd;
+  --iw-text: #14161a;
+  --iw-text-2: #5b6472;
+  --iw-text-3: #8b95a3;
+  --iw-primary: #2563eb;
+  --iw-primary-hover: #1d4ed8;
+  --iw-primary-soft: #eff4ff;
+  --iw-danger: #d92d20;
+  --iw-danger-soft: #fef3f2;
+  --iw-warn: #b54708;
+  --iw-warn-soft: #fffaeb;
+  --iw-ok: #027a48;
+  --iw-ok-soft: #ecfdf3;
+
+  /* 间距 */
+  --iw-s1: 4px;
+  --iw-s2: 8px;
+  --iw-s3: 12px;
+  --iw-s4: 16px;
+  --iw-s5: 24px;
+  --iw-s6: 32px;
+  --iw-s7: 48px;
+
+  /* 尺寸 */
+  --iw-radius: 8px;
+  --iw-radius-sm: 6px;
+  --iw-header-h: 56px;
+
+  /* 字体（系统字体栈，不引入外部字体，架构 7.2 第 13 条） */
+  --iw-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Source Han Sans SC', 'Noto Sans CJK SC', sans-serif;
+  --iw-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--iw-bg);
+  color: var(--iw-text);
+  font-family: var(--iw-font);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--iw-primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--iw-primary);
+  outline-offset: 2px;
+}
