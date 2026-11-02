@@ -10,15 +10,18 @@ import {
   type ReactNode,
 } from 'react';
 import type {
-  ConflictEntry, ConnectionStatus, Filters, RecordItem, Schema, SortSpec, SuggestionEntry,
+  ActionLogEntry, ConflictEntry, ConnectionStatus, Filters, RecordItem, Schema, SortSpec, SuggestionEntry,
 } from '../types';
 import { EMPTY_FILTERS } from '../types';
 import { DEFAULT_SCHEMA, mergeSchema } from '../schema';
 import { buildIndexes, type Indexes } from './selectors';
-import { applyMigrations, nextRecordId, validateRecords } from './migrations';
 import {
-  clearConfig, readBaseline, readCache, readConfigMeta, readPending, readPrefs, readSettings,
-  readToken, writeBaseline, writeCache, writeConfig, writePending, writePrefs, writeSettings,
+  applyMigrations, findLegacyFieldKeys, findShellRecords, nextRecordId, validateRecords,
+} from './migrations';
+import {
+  appendActionLog, clearConfig, readActionLog, readBaseline, readCache, readConfigMeta,
+  readLastIssuedId, readPending, readPrefs, readSettings, readToken, writeBaseline, writeCache,
+  writeConfig, writeLastIssuedId, writePending, writePrefs, writeSettings,
   type ConfigMeta, type PendingChange, type WriteOutcome,
 } from './persist';
 import { GithubClient, GithubError, parseRepoUrl } from '../sync/github';
@@ -32,11 +35,11 @@ export const SCHEMA_FILE_PATH = 'data/schema.json';
 export const CONFLICTS_FILE_PATH = 'data/pending-conflicts.json';
 export const AUDIT_FILE_PATH = 'data/migration-audit.json';
 
-/** 未删除（可见）记录条数 —— 写入远端的 recordCount 口径（质检 P2-2） */
+/**
+ * v4：回收站整体移除，记录数口径 = 实际记录数（不再有「未删除 / 已删除」之分）。
+ */
 export function countActive(records: RecordItem[]): number {
-  let n = 0;
-  for (const r of records) if (!r.deletedAt) n += 1;
-  return n;
+  return records.length;
 }
 
 /** 本地存储写入失败时给用户的提示（质检 P2-3） */
@@ -69,6 +72,10 @@ export interface AppState {
   lastSyncedAt: string | null;
   pending: PendingChange[];
   backupIntervalDays: number;
+  /** v4：同步 / 备份操作日志（只保留最近 3 条，新的在前） */
+  actionLog: ActionLogEntry[];
+  /** v4：记录 ID 发号水位（物理删除后 ID 不复用） */
+  lastIssuedId: number;
   syncStatus: 'idle' | 'syncing' | 'conflict' | 'error' | 'offline';
   syncMessage: string | null;
   /** 冲突详情（远端 vs 本地） */
@@ -101,12 +108,15 @@ type Action =
   | { type: 'SET_CONFLICT_DETAIL'; detail: AppState['conflictDetail'] }
   | { type: 'SET_PENDING'; pending: PendingChange[] }
   | { type: 'SET_BACKUP_INTERVAL'; days: number }
+  | { type: 'SET_ACTION_LOG'; entries: ActionLogEntry[] }
+  | { type: 'SET_LAST_ISSUED_ID'; id: number }
   | { type: 'SET_NOTICE'; notice: string | null }
   | { type: 'SET_AUTO_PULL_BLOCK'; blocked: boolean; message: string | null }
   | { type: 'UPSERT_RECORD'; record: RecordItem; change: PendingChange }
-  | { type: 'SOFT_DELETE'; id: number; timestamp: string; change: PendingChange }
-  | { type: 'RESTORE'; id: number; change: PendingChange }
-  | { type: 'PURGE_EXPIRED'; cutoff: string };
+  /** v4：回收站移除 —— 删除即物理删除 */
+  | { type: 'DELETE_RECORD'; id: number; change: PendingChange }
+  /** v4：一键清理「名称为空」的导入遗留空壳记录 */
+  | { type: 'CLEANUP_SHELL'; ids: number[]; changes: PendingChange[] };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -124,7 +134,9 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, pageSize: action.size, page: 1 };
     case 'SET_PRESETS':
       return { ...state, presets: action.presets };
-    case 'SET_RECORDS':
+    case 'SET_RECORDS': {
+      // v4：拉回远端数据后，发号水位至少不低于远端最大 ID（防止删记录后复用旧号）
+      const maxId = action.records.reduce((m, r) => Math.max(m, r.id), 0);
       return {
         ...state,
         records: action.records,
@@ -132,11 +144,13 @@ function reducer(state: AppState, action: Action): AppState {
         baseSha: action.baseSha !== undefined ? action.baseSha : state.baseSha,
         dataVersion: action.dataVersion ?? state.dataVersion,
         lastSyncedAt: action.updatedAt ?? state.lastSyncedAt,
+        lastIssuedId: Math.max(state.lastIssuedId, maxId),
         // 合并场景必须保留未同步队列：清空它等于抹掉用户还没写回的改动（质检 P0-1）
         pending: action.keepPending ? state.pending : [],
         syncStatus: 'idle',
         syncMessage: null,
       };
+    }
     case 'SET_SCHEMA':
       return { ...state, schema: action.schema };
     case 'SET_CONFLICTS':
@@ -160,6 +174,10 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, pending: action.pending };
     case 'SET_BACKUP_INTERVAL':
       return { ...state, backupIntervalDays: action.days };
+    case 'SET_ACTION_LOG':
+      return { ...state, actionLog: action.entries };
+    case 'SET_LAST_ISSUED_ID':
+      return { ...state, lastIssuedId: Math.max(state.lastIssuedId, action.id) };
     case 'SET_NOTICE':
       return { ...state, notice: action.notice };
     case 'SET_AUTO_PULL_BLOCK':
@@ -176,9 +194,9 @@ function reducer(state: AppState, action: Action): AppState {
         pending: [...state.pending, action.change],
       };
     }
-    case 'SOFT_DELETE': {
-      const records = state.records.map((r) =>
-        (r.id === action.id ? { ...r, deletedAt: action.timestamp } : r));
+    case 'DELETE_RECORD': {
+      // v4：回收站移除 —— 删除即物理删除，记录直接移出集合
+      const records = state.records.filter((r) => r.id !== action.id);
       return {
         ...state,
         records,
@@ -186,21 +204,16 @@ function reducer(state: AppState, action: Action): AppState {
         pending: [...state.pending, action.change],
       };
     }
-    case 'RESTORE': {
-      const records = state.records.map((r) =>
-        (r.id === action.id ? { ...r, deletedAt: null } : r));
+    case 'CLEANUP_SHELL': {
+      // v4：清理「名称为空」的导入遗留空壳记录（用户一键触发）
+      const drop = new Set(action.ids);
+      const records = state.records.filter((r) => !drop.has(r.id));
       return {
         ...state,
         records,
         indexes: buildIndexes(records),
-        pending: [...state.pending, action.change],
+        pending: [...state.pending, ...action.changes],
       };
-    }
-    case 'PURGE_EXPIRED': {
-      const records = state.records.filter(
-        (r) => !(r.deletedAt && r.deletedAt < action.cutoff),
-      );
-      return { ...state, records, indexes: buildIndexes(records) };
     }
     default:
       return state;
@@ -218,8 +231,20 @@ function initState(): AppState {
   const baseline = readBaseline();
 
   const schema = mergeSchema(DEFAULT_SCHEMA, cache?.schema ?? undefined);
-  const rawRecords = cache?.records ?? [];
+
+  // v3：本地缓存里的记录可能还是旧结构（旧键名 / 布尔拥有形态 / 已删除字段），
+  // 启动时就地迁移 —— 新版页面读旧数据不白屏、不丢字段。
+  const cached = cache?.records ?? [];
+  const rawRecords = applyMigrations(
+    { schemaVersion: cache?.schemaVersion ?? 1, dataVersion: cache?.dataVersion ?? 1, updatedAt: '', records: cached },
+    schema,
+  ).records;
   const pendingChanges = pending.changes ?? [];
+  const actionLog = readActionLog();
+  const lastIssuedId = Math.max(
+    readLastIssuedId(),
+    rawRecords.reduce((m, r) => Math.max(m, r.id), 0),
+  );
 
   // 质检 P0-1：启动时就判断本地有没有未同步改动，决定要不要自动拉取
   const autoPull = decideAutoPull({
@@ -249,6 +274,8 @@ function initState(): AppState {
     lastSyncedAt: cache?.lastSyncedAt ?? null,
     pending: pendingChanges,
     backupIntervalDays: settings.backupIntervalDays ?? 7,
+    actionLog,
+    lastIssuedId,
     syncStatus: 'idle',
     syncMessage: null,
     conflictDetail: null,
@@ -272,11 +299,12 @@ export interface AppActions {
   setPageSize: (size: number) => void;
   savePreset: (name: string) => void;
   deletePreset: (id: string) => void;
-  addRecord: (values: Partial<RecordItem>) => number;
+  addRecord: (values: Partial<RecordItem>) => number | null;
   updateRecord: (id: number, values: Partial<RecordItem>) => void;
+  /** v4：删除即物理删除（无回收站） */
   deleteRecord: (id: number) => void;
-  restoreRecord: (id: number) => void;
-  purgeExpired: () => void;
+  /** v4：一键清理「名称为空」的导入遗留空壳记录，返回清理条数 */
+  cleanupShellRecords: () => number;
   resolveConflictItem: (recordId: number) => void;
   saveConfig: (input: { repoUrl: string; branch: string; token: string; sessionOnly: boolean }) => Promise<boolean>;
   clearConfigAction: () => void;
@@ -336,6 +364,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (message) dispatch({ type: 'SET_NOTICE', notice: message });
   }, [state.pending, state.baseSha]);
 
+  // v4：发号水位持久化 —— 物理删除记录后，新记录不复用旧 ID
+  useEffect(() => {
+    if (state.lastIssuedId > 0) writeLastIssuedId(state.lastIssuedId);
+  }, [state.lastIssuedId]);
+
   /* -------- 派生数据 -------- */
   const actions = useMemo<AppActions>(() => {
     const current = () => stateRef.current;
@@ -351,19 +384,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'SET_FILTERS', filters: { ...f, [key]: next } as Filters });
     };
 
-    const addRecord = (values: Partial<RecordItem>): number => {
+    /**
+     * v4：操作日志落盘（只保留最近 3 条）。
+     * 同步 / 备份的每一次动作都记一条：时间、类型、结果（失败带原因）。
+     */
+    const recordAction = (类型: string, 结果: '成功' | '失败', 说明: string) => {
+      const entry: ActionLogEntry = { 时间: new Date().toISOString(), 类型, 结果, 说明 };
+      const entries = appendActionLog(entry);
+      dispatch({ type: 'SET_ACTION_LOG', entries });
+    };
+
+    const addRecord = (values: Partial<RecordItem>): number | null => {
       const st = current();
+      // v4 修复（同步阻断根因之二）：任何入口都不允许产生「名称为空」的记录。
+      // 名称是必填项；为空直接拒绝创建，绝不静默落一条空壳记录。
+      const name = String(values.名称 ?? '').trim();
+      if (!name) {
+        dispatch({ type: 'SET_NOTICE', notice: '「名称」为必填项，未创建这条记录。' });
+        return null;
+      }
       const now = new Date().toISOString();
-      const id = nextRecordId(st.records);
-      const record: RecordItem = {
+      const id = nextRecordId(st.records, st.lastIssuedId);
+      // v3：字段改名后的新结构；「电子版」「纸质版」默认为第三态「不确定」
+      const base: RecordItem = {
         id,
-        名称: '', 品牌: '', 分类: [], 款式: '', 季节: '', 教程: '未知',
-        拥有电子版: false, 电子版尺码组: [], 电子版缺码: false,
-        拥有纸质版: false, 纸质版尺码: [], 推荐: '未评价', 做过: false,
-        想做: '未标记', 关联: [], 备注: '',
-        创建时间: now, 更新时间: now, deletedAt: null,
-        ...values,
+        名称: name, 品牌: '', 分类: [], 款式: '', 季节: '', 教程: '未知',
+        电子版: '不确定', 电子版尺码组: [],
+        纸质版: '不确定', 纸质版尺码: [], 推荐: '未评价', 做过: false,
+        想做: '未标记', 备注: '',
+        创建时间: now, 更新时间: now,
       } as RecordItem;
+      // 名称以校验过的值为准（调用方传进来的空白/未 trim 值一律丢弃）
+      const record = { ...base, ...values, 名称: name } as RecordItem;
       dispatch({
         type: 'UPSERT_RECORD',
         record,
@@ -375,6 +427,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           时间: now,
         },
       });
+      dispatch({ type: 'SET_LAST_ISSUED_ID', id });
+      writeLastIssuedId(id);
       return id;
     };
 
@@ -382,6 +436,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const st = current();
       const prev = st.records.find((r) => r.id === id);
       if (!prev) return;
+      // v4 修复：不允许把「名称」改成空 —— 否则一条有效记录会被降级成空壳记录
+      if ('名称' in values && !String(values.名称 ?? '').trim()) {
+        dispatch({ type: 'SET_NOTICE', notice: '「名称」为必填项，未保存这次修改。' });
+        return;
+      }
       const changedFields = Object.keys(values).filter((k) => {
         const a = (prev as unknown as Record<string, unknown>)[k];
         const b = (values as unknown as Record<string, unknown>)[k];
@@ -403,22 +462,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
 
     const deleteRecord = (id: number) => {
+      const st = current();
+      if (!st.records.some((r) => r.id === id)) return;
       const now = new Date().toISOString();
+      // v4：删除即物理删除（回收站已移除），没有恢复入口
       dispatch({
-        type: 'SOFT_DELETE',
+        type: 'DELETE_RECORD',
         id,
-        timestamp: now,
-        change: { id: `${id}-${Date.now()}`, 记录ID: id, 动作: '删除', 字段: ['deletedAt'], 时间: now },
+        change: { id: `${id}-${Date.now()}`, 记录ID: id, 动作: '删除', 字段: [], 时间: now },
       });
     };
 
-    const restoreRecord = (id: number) => {
+    /**
+     * v4：一键清理「名称为空」的导入遗留空壳记录（如 795 号记录）。
+     * 这些记录来自最初的表格导入，不是用户录入的；清理后随下一次同步写回远端。
+     */
+    const cleanupShellRecords = (): number => {
+      const st = current();
+      const shells = findShellRecords(st.records);
+      if (!shells.length) {
+        dispatch({ type: 'SET_NOTICE', notice: '没有需要清理的空壳记录。' });
+        return 0;
+      }
       const now = new Date().toISOString();
       dispatch({
-        type: 'RESTORE',
-        id,
-        change: { id: `${id}-${Date.now()}`, 记录ID: id, 动作: '恢复', 字段: ['deletedAt'], 时间: now },
+        type: 'CLEANUP_SHELL',
+        ids: shells.map((r) => r.id),
+        changes: shells.map((r) => ({
+          id: `${r.id}-${Date.now()}`,
+          记录ID: r.id,
+          动作: '删除' as const,
+          字段: [],
+          时间: now,
+        })),
       });
+      dispatch({
+        type: 'SET_NOTICE',
+        notice: `已清理 ${shells.length} 条名称为空的导入遗留记录，下次同步会写回仓库。`,
+      });
+      return shells.length;
     };
 
     const makeClient = (): GithubClient | null => {
@@ -499,6 +581,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           });
           dispatch({ type: 'SET_SYNC', status: 'conflict', message: '远端数据已被更新，需要先处理冲突。' });
           dispatch({ type: 'SET_CONNECTION', status: 'connected' });
+          recordAction('从仓库拉取', '失败', `远端有 ${plan.conflicts.length} 处字段级冲突，需先处理冲突`);
           return false;
         }
 
@@ -522,6 +605,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         dispatch({ type: 'SET_CONNECTION', status: 'connected' });
         dispatch({ type: 'SET_AUTO_PULL_BLOCK', blocked: false, message: null });
+        recordAction('从仓库拉取', '成功', plan.summary);
         if (!silent) {
           dispatch({ type: 'SET_NOTICE', notice: plan.summary });
         }
@@ -530,6 +614,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const message = err instanceof GithubError ? err.message : '拉取失败，请稍后重试';
         dispatch({ type: 'SET_CONNECTION', status: err instanceof GithubError && err.kind === 'auth' ? 'invalid' : 'offline' });
         dispatch({ type: 'SET_SYNC', status: 'error', message });
+        recordAction('从仓库拉取', '失败', message);
         if (!silent) dispatch({ type: 'SET_NOTICE', notice: message });
         return false;
       }
@@ -542,13 +627,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'SET_NOTICE', notice: '尚未配置仓库与令牌，请先到设置页完成配置。' });
         return false;
       }
+      // v4 修复（同步被阻断的根因）：
+      // 写回前校验**只针对有效记录**（排除「名称为空」的导入遗留空壳记录与软删残留）。
+      // v3 及更早版本把所有记录都算进必填校验，而数据里存在一条名称为空的历史导入记录，
+      // 于是每次写回都被这条用户既看不到、也改不掉的记录挡住 —— 同步永久卡死。
       const issues = validateRecords(st.records, st.schema);
       if (issues.length) {
-        dispatch({
-          type: 'SET_SYNC',
-          status: 'error',
-          message: `写回前校验未通过（${issues.length} 处）：${issues[0].记录ID} 号记录的「${issues[0].字段}」${issues[0].问题}`,
-        });
+        const first = issues[0];
+        const msg = `写回前校验未通过（${issues.length} 处）：${first.记录ID} 号记录的「${first.字段}」${first.问题}`;
+        dispatch({ type: 'SET_SYNC', status: 'error', message: msg });
+        recordAction('同步写回', '失败', msg);
         return false;
       }
       dispatch({ type: 'SET_SYNC', status: 'syncing' });
@@ -559,6 +647,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
         const remoteRecords = remoteParsed.records ?? [];
         let records = st.records;
+
+        // v3 写回闸门：远端若仍带旧字段（关联 / 电子版缺码），写回会把这些列静默抹掉。
+        // 必须先由数据仓迁移脚本完成「归档旧字段取值 + 结构迁移」，才允许写回。
+        const legacyKeys = findLegacyFieldKeys(remoteRecords);
+        if (legacyKeys.length) {
+          const msg = `远端数据仍包含已废弃字段（${legacyKeys.join('、')}），写回会覆盖掉这些历史取值。请先执行数据仓 v3 迁移（归档旧字段后再写回），再同步。`;
+          dispatch({ type: 'SET_SYNC', status: 'error', message: msg });
+          dispatch({
+            type: 'SET_NOTICE',
+            notice: `已拦截写回：远端仍有旧字段 ${legacyKeys.join('、')}。`,
+          });
+          recordAction('同步写回', '失败', `远端仍有已废弃字段 ${legacyKeys.join('、')}，需先执行数据仓迁移`);
+          return false;
+        }
 
         if (remote.sha !== st.baseSha) {
           // 远端已被改动 → 用「持久化基线快照」做真三方合并。
@@ -576,6 +678,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               detail: { diffs: plan.conflicts, remoteRecords, remoteSha: remote.sha },
             });
             dispatch({ type: 'SET_SYNC', status: 'conflict', message: '远端数据已被更新，需要先处理冲突。' });
+            recordAction('同步写回', '失败', `远端有 ${plan.conflicts.length} 处字段级冲突，需先处理冲突`);
             return false;
           }
           records = plan.records;
@@ -596,6 +699,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'SET_SYNC', status: 'idle', message: '远端已是最新，无需写入。' });
           dispatch({ type: 'SET_NOTICE', notice: '远端已是最新，本次没有需要写回的改动。' });
           dispatch({ type: 'SET_AUTO_PULL_BLOCK', blocked: false, message: null });
+          recordAction('同步写回', '成功', '远端已是最新，无需写入');
           return true;
         }
 
@@ -603,9 +707,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           schemaVersion: st.schema.schemaVersion,
           dataVersion: st.dataVersion + 1,
           updatedAt: new Date().toISOString(),
-          // 质检 P2-2：recordCount 只统计未删除记录，软删记录另计
-          recordCount: countActive(records),
-          deletedCount: records.length - countActive(records),
+          // v4：回收站移除，recordCount = 实际记录数（不再区分未删除 / 已删除）
+          recordCount: records.length,
           totalCount: records.length,
           records,
         };
@@ -625,10 +728,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'SET_SYNC', status: 'idle', message: '同步成功。' });
         dispatch({ type: 'SET_NOTICE', notice: '已同步到 GitHub 仓库。' });
         dispatch({ type: 'SET_AUTO_PULL_BLOCK', blocked: false, message: null });
+        recordAction('同步写回', '成功', `已写入 ${payload.recordCount} 条记录（数据版本 ${payload.dataVersion}）`);
         return true;
       } catch (err) {
         if (err instanceof GithubError && err.kind === 'conflict') {
           dispatch({ type: 'SET_SYNC', status: 'conflict', message: err.message });
+          recordAction('同步写回', '失败', err.message);
           return false;
         }
         const message = err instanceof GithubError ? err.message : '同步失败';
@@ -638,6 +743,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           message,
         });
         dispatch({ type: 'SET_NOTICE', notice: message });
+        recordAction('同步写回', '失败', message);
         return false;
       }
     };
@@ -658,7 +764,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dataVersion: st.dataVersion,
         updatedAt: new Date().toISOString(),
         recordCount: countActive(st.records),
-        deletedCount: st.records.length - countActive(st.records),
         totalCount: st.records.length,
         records: st.records,
       }, null, 2);
@@ -694,9 +799,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           schemaVersion: st.schema.schemaVersion,
           dataVersion: st.dataVersion + 1,
           updatedAt: new Date().toISOString(),
-          // 质检 P2-2：recordCount 只统计未删除记录
+          // v4：回收站移除，recordCount = 实际记录数
           recordCount: countActive(records),
-          deletedCount: records.length - countActive(records),
           totalCount: records.length,
           records,
         };
@@ -716,10 +820,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'SET_SYNC', status: 'idle', message: '冲突已处理并写回。' });
         dispatch({ type: 'SET_NOTICE', notice: '冲突已处理：已为你保存本地版本，并按所选方案写回。' });
         dispatch({ type: 'SET_AUTO_PULL_BLOCK', blocked: false, message: null });
+        recordAction('冲突处理写回', '成功', `按「${choice === 'local' ? '本地为准' : choice === 'remote' ? '远端为准' : '合并'}」写回 ${payload.recordCount} 条记录`);
         return true;
       } catch (err) {
         const message = err instanceof GithubError ? err.message : '冲突处理后写回失败';
         dispatch({ type: 'SET_SYNC', status: 'error', message });
+        recordAction('冲突处理写回', '失败', message);
         return false;
       }
     };
@@ -782,15 +888,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const exportRange = (scope: 'all' | 'filtered'): RecordItem[] => {
       const st = current();
-      if (scope === 'all') return st.records.filter((r) => !r.deletedAt);
+      if (scope === 'all') return st.records;
       // 质检 P2-1：导出与列表必须同口径 —— 同一套筛选、同一套搜索、同一排序。
       // 原来这里用的是一套简化版 includes 匹配，与列表页的索引搜索结果对不上。
-      const list = applyQuery(
-        st.records.filter((r) => !r.deletedAt),
-        st.filters,
-        st.query,
-        st.indexes,
-      );
+      const list = applyQuery(st.records, st.filters, st.query, st.indexes);
       return sortRecords(list, st.sort);
     };
 
@@ -798,12 +899,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const st = current();
       const list = exportRange(scope);
       const meta = {
-        scope: scope === 'all' ? '全部未删除记录' : '当前筛选命中记录',
+        scope: scope === 'all' ? '全部记录' : '当前筛选命中记录',
         exportedAt: new Date().toISOString(),
         count: list.length,
       };
       downloadJson(list, st.schema, meta, st.dataVersion);
       dispatch({ type: 'SET_NOTICE', notice: `已导出 ${list.length} 条记录（JSON）。` });
+      recordAction('本地备份导出', '成功', `导出 ${list.length} 条记录（JSON）`);
     };
 
     const exportXlsx = (scope: 'all' | 'filtered') => {
@@ -812,6 +914,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const stats = computeStats(list);
       downloadXlsx(list, st.schema, buildStatsRows(stats));
       dispatch({ type: 'SET_NOTICE', notice: `已导出 ${list.length} 条记录（Excel）。` });
+      recordAction('本地备份导出', '成功', `导出 ${list.length} 条记录（Excel）`);
     };
 
     return {
@@ -840,11 +943,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addRecord,
       updateRecord,
       deleteRecord,
-      restoreRecord,
-      purgeExpired: () => {
-        const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-        dispatch({ type: 'PURGE_EXPIRED', cutoff });
-      },
+      cleanupShellRecords,
       resolveConflictItem: (recordId) => dispatch({ type: 'RESOLVE_CONFLICT_ITEM', recordId }),
       saveConfig,
       clearConfigAction,

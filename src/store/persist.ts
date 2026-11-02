@@ -1,18 +1,21 @@
 /**
  * 信息汇总工作台 · 浏览器本地存储（架构 4.3 / 4.5）
  *
- * 六个键（ARCH L3 层）：
+ * 八个键（ARCH L3 层）：
  *   iw.config   连接配置（仓库 + 令牌）——令牌只在发起 API 请求时读取，不进全局状态
  *   iw.cache    本地数据缓存（记录 + schema + 基线 sha + dataVersion）
  *   iw.pending  离线暂存队列（未同步改动）
  *   iw.baseline 上次成功同步时的记录快照 —— 三方合并的基线（质检 P1-1）
  *   iw.prefs    界面偏好（显示列、排序、分页、筛选方案）
  *   iw.settings 设置项（备份周期等）
+ *   iw.actionlog 同步 / 备份操作日志（v4：只保留最近 3 条）
+ *   iw.maxid    记录 ID 发号水位（v4：保证删除记录后 ID 不复用）
  *
  * ⚠️ 令牌永不写入 URL / 日志 / commit message / 导出文件 / 构建产物。
  */
 
-import type { FilterPreset, RecordItem, RepoConfig, Schema, SortSpec } from '../types';
+import type { ActionLogEntry, FilterPreset, RecordItem, RepoConfig, Schema, SortSpec } from '../types';
+import { LEGACY_FIELD_ALIAS, REMOVED_FIELD_KEYS } from '../schema';
 
 export const STORAGE_KEYS = {
   config: 'iw.config',
@@ -21,7 +24,12 @@ export const STORAGE_KEYS = {
   baseline: 'iw.baseline',
   prefs: 'iw.prefs',
   settings: 'iw.settings',
+  actionlog: 'iw.actionlog',
+  maxid: 'iw.maxid',
 } as const;
+
+/** v4：操作日志最多保留的条数 */
+export const ACTION_LOG_LIMIT = 3;
 
 /** 写入结果：配额超限必须能被上层感知，不能静默失败（质检 P2-3） */
 export type WriteOutcome = 'ok' | 'quota' | 'error';
@@ -176,7 +184,8 @@ export interface PendingChange {
   /** 变更条目的唯一标识（记录 ID + 时间戳），非业务主键 */
   id: string;
   记录ID: number;
-  动作: '新增' | '编辑' | '删除' | '恢复';
+  /** v4：移除回收站后动作只有「新增 / 编辑 / 删除」，删除即物理删除 */
+  动作: '新增' | '编辑' | '删除';
   字段: string[];
   时间: string;
 }
@@ -187,7 +196,14 @@ export interface PendingQueue {
 }
 
 export function readPending(): PendingQueue {
-  return readJson<PendingQueue>(STORAGE_KEYS.pending, safeStorage('local')) ?? { baseSha: null, changes: [] };
+  const raw = readJson<PendingQueue>(STORAGE_KEYS.pending, safeStorage('local')) ?? { baseSha: null, changes: [] };
+  // v3：待同步队列里记录的字段名同步改名 / 剔除（仅影响界面展示的字段清单）
+  raw.changes = (raw.changes ?? []).map((c) => ({
+    ...c,
+    字段: (c.字段 ?? []).map((f) => (f in LEGACY_FIELD_ALIAS ? LEGACY_FIELD_ALIAS[f] : f))
+      .filter((f) => !REMOVED_FIELD_KEYS.includes(f)),
+  }));
+  return raw;
 }
 
 export function writePending(queue: PendingQueue): WriteOutcome {
@@ -196,6 +212,38 @@ export function writePending(queue: PendingQueue): WriteOutcome {
 
 export function clearPending(): void {
   removeKey(STORAGE_KEYS.pending, safeStorage('local'));
+}
+
+/* ---------------------- 旧字段名归一（v3 兼容） ---------------------- */
+
+/**
+ * 把界面偏好里的旧字段名换成新字段名：
+ *   · 「拥有电子版」→「电子版」、「拥有纸质版」→「纸质版」
+ *   · 「电子版缺码」「关联」已删除 → 直接剔除
+ * 目的：老用户浏览器里的本地偏好不会因为改名而失效，也不会出现「选了一个已删除的列」。
+ */
+export function normalizeLegacyNames(input: unknown): unknown {
+  if (Array.isArray(input)) {
+    return input
+      .filter((v) => !REMOVED_FIELD_KEYS.includes(String(v)))
+      .map((v) => (typeof v === 'string' && v in LEGACY_FIELD_ALIAS ? LEGACY_FIELD_ALIAS[v] : v));
+  }
+  if (input && typeof input === 'object') {
+    const src = input as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(src)) {
+      if (REMOVED_FIELD_KEYS.includes(k)) continue;
+      const key = k in LEGACY_FIELD_ALIAS ? LEGACY_FIELD_ALIAS[k] : k;
+      if ((key === '电子版' || key === '纸质版') && typeof v === 'boolean') {
+        // 旧的布尔三态筛选 → 新的枚举多选筛选（已是数组的新格式保持原样）
+        out[key] = v === true ? ['有'] : ['没有'];
+        continue;
+      }
+      out[key] = v;
+    }
+    return out;
+  }
+  return input;
 }
 
 /* ------------------------------ 界面偏好 ------------------------------ */
@@ -208,7 +256,16 @@ export interface Prefs {
 }
 
 export function readPrefs(): Partial<Prefs> {
-  return readJson<Partial<Prefs>>(STORAGE_KEYS.prefs, safeStorage('local')) ?? {};
+  const raw = readJson<Partial<Prefs>>(STORAGE_KEYS.prefs, safeStorage('local')) ?? {};
+  // v3：列名与筛选方案里的旧字段名统一改名，已删除字段剔除
+  if (raw.columns) raw.columns = normalizeLegacyNames(raw.columns) as string[];
+  if (raw.presets) {
+    raw.presets = raw.presets.map((p) => ({
+      ...p,
+      filters: normalizeLegacyNames(p.filters) as FilterPreset['filters'],
+    }));
+  }
+  return raw;
 }
 
 export function writePrefs(prefs: Prefs): void {
@@ -227,4 +284,52 @@ export function readSettings(): Settings {
 
 export function writeSettings(settings: Settings): void {
   writeJson(STORAGE_KEYS.settings, settings, safeStorage('local'));
+}
+
+/* --------------------------- 操作日志（v4） --------------------------- */
+
+/**
+ * 读操作日志（同步 / 备份动作）。只保留最近 ACTION_LOG_LIMIT 条，新的在前。
+ * 读取时做一次结构兜底：浏览器里存的是 JSON，可能被手工改坏。
+ */
+export function readActionLog(): ActionLogEntry[] {
+  const raw = readJson<ActionLogEntry[]>(STORAGE_KEYS.actionlog, safeStorage('local'));
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((e): e is ActionLogEntry => Boolean(e) && typeof e === 'object')
+    .map((e): ActionLogEntry => ({
+      时间: String(e.时间 ?? ''),
+      类型: String(e.类型 ?? ''),
+      结果: e.结果 === '失败' ? '失败' : '成功',
+      说明: String(e.说明 ?? ''),
+    }))
+    .slice(0, ACTION_LOG_LIMIT);
+}
+
+/**
+ * 追加一条操作日志并返回最新的完整列表（只保留最近 ACTION_LOG_LIMIT 条）。
+ * 写失败不抛错：日志是辅助信息，不能因为它写不进去就把同步功能搞挂。
+ */
+export function appendActionLog(entry: ActionLogEntry): ActionLogEntry[] {
+  const next = [entry, ...readActionLog()].slice(0, ACTION_LOG_LIMIT);
+  writeJson(STORAGE_KEYS.actionlog, next, safeStorage('local'));
+  return next;
+}
+
+/* --------------------------- 发号水位（v4） --------------------------- */
+
+/**
+ * 读「历史发号水位」—— 已经用出去过的最大记录 ID。
+ *
+ * v4 移除回收站后记录被物理删除，若新 ID 只看现存记录的最大值，
+ * 删掉最大号记录后新记录会复用旧 ID，与同步基线里的历史记录撞号
+ * （三方合并时会被判成「同一记录被改」）。水位保证 ID 只增不复用。
+ */
+export function readLastIssuedId(): number {
+  const raw = readJson<number>(STORAGE_KEYS.maxid, safeStorage('local'));
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+}
+
+export function writeLastIssuedId(id: number): WriteOutcome {
+  return writeJson(STORAGE_KEYS.maxid, Math.max(0, Math.floor(id)), safeStorage('local'));
 }

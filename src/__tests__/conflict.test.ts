@@ -14,15 +14,13 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     款式: '',
     季节: '',
     教程: '未知',
-    拥有电子版: false,
+    电子版: '不确定',
     电子版尺码组: [],
-    电子版缺码: false,
-    拥有纸质版: false,
+    纸质版: '不确定',
     纸质版尺码: [],
     推荐: '未评价',
     做过: false,
     想做: '未标记',
-    关联: [],
     备注: '',
     创建时间: '2026-01-01T00:00:00.000Z',
     更新时间: '2026-01-01T00:00:00.000Z',
@@ -158,9 +156,9 @@ describe('内容一致性判断（AC-7 未改动不产生新版本）', () => {
     expect(hasContentDiff(base, other)).toBe(true);
   });
 
-  it('删除状态不同返回 true', () => {
+  it('v4：删除状态不再参与差异比较（回收站已移除）', () => {
     const deleted = [{ ...base[0], deletedAt: '2026-05-01T00:00:00.000Z' }, base[1]];
-    expect(hasContentDiff(base, deleted)).toBe(true);
+    expect(hasContentDiff(base, deleted)).toBe(false);
   });
 
   it('条数不同返回 true', () => {

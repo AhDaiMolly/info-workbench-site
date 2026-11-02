@@ -433,6 +433,37 @@
 .iw-settings-title { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
 .iw-settings-desc { font-size: 13px; color: var(--iw-text-2); margin: 0 0 var(--iw-s4); }
 
+/* v4：操作日志（最近 3 条）与数据体检块 */
+.iw-log-block {
+  border-top: 1px solid var(--iw-border);
+  padding-top: var(--iw-s4);
+  margin-top: var(--iw-s2);
+}
+
+.iw-log-title { font-size: 13px; font-weight: 600; margin-bottom: var(--iw-s2); }
+
+.iw-log-list { list-style: none; margin: 0; padding: 0; }
+
+.iw-log-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--iw-s2);
+  flex-wrap: wrap;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--iw-border);
+  font-size: 13px;
+}
+.iw-log-item:last-child { border-bottom: none; }
+
+.iw-log-time { color: var(--iw-text-3); font-variant-numeric: tabular-nums; }
+.iw-log-type { font-weight: 500; }
+.iw-log-result { font-size: 12px; padding: 0 6px; border-radius: 999px; flex-shrink: 0; }
+.iw-log-ok { color: var(--iw-ok); background: var(--iw-ok-soft); }
+.iw-log-bad { color: var(--iw-danger); background: var(--iw-danger-soft); }
+.iw-log-note { color: var(--iw-text-2); word-break: break-word; }
+
+.iw-log-empty { font-size: 13px; color: var(--iw-text-3); }
+
 .iw-status-dot {
   display: inline-block;
   width: 7px;

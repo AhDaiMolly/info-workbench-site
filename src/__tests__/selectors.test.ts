@@ -21,15 +21,13 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     款式: '',
     季节: '',
     教程: '未知',
-    拥有电子版: false,
+    电子版: '不确定',
     电子版尺码组: [],
-    电子版缺码: false,
-    拥有纸质版: false,
+    纸质版: '不确定',
     纸质版尺码: [],
     推荐: '未评价',
     做过: false,
     想做: '未标记',
-    关联: [],
     备注: '',
     创建时间: '2026-01-01T00:00:00.000Z',
     更新时间: '2026-01-01T00:00:00.000Z',
@@ -42,22 +40,25 @@ const sample: RecordItem[] = [
   makeRecord({
     id: 1, 名称: '棉麻衬衫', 品牌: '品牌甲', 分类: ['女装'], 款式: '衬衣',
     季节: '夏', 教程: '有', 推荐: '推荐', 做过: true, 想做: '想做',
+    电子版: '有', 纸质版: '没有',
     备注: '面料透气，夏天很合适', 更新时间: '2026-03-02T00:00:00.000Z',
   }),
   makeRecord({
     id: 2, 名称: '羊毛外套', 品牌: '品牌乙', 分类: ['女装', '男装'], 款式: '外套',
-    季节: '冬', 教程: '无', 拥有电子版: true, 电子版尺码组: ['女士全码'],
+    季节: '冬', 教程: '无', 电子版: '有', 纸质版: '没有', 电子版尺码组: ['女士全码'],
     推荐: '未评价', 想做: '不确定', 备注: '冬天保暖，含羊毛',
     更新时间: '2026-03-01T00:00:00.000Z',
   }),
   makeRecord({
     id: 3, 名称: '休闲长裤', 品牌: '品牌甲', 分类: ['男装'], 款式: '长裤',
-    季节: '春秋', 教程: '未知', 想做: '不想做', 备注: '普通款',
+    季节: '春秋', 教程: '未知', 电子版: '没有', 纸质版: '不确定',
+    想做: '不想做', 备注: '普通款',
     更新时间: '2026-02-01T00:00:00.000Z',
   }),
   makeRecord({
     id: 4, 名称: '旧款卫衣', 品牌: '品牌丙', 分类: [], 款式: '卫衣',
-    季节: '', 推荐: '不推荐', 做过: false, 想做: '未标记', 备注: '有点旧了',
+    季节: '', 推荐: '不推荐', 做过: false, 想做: '未标记',
+    电子版: '没有', 纸质版: '没有', 备注: '有点旧了',
     更新时间: '2026-01-01T00:00:00.000Z',
   }),
 ];
@@ -81,10 +82,17 @@ describe('筛选：多条件 AND + 同字段选项级 OR', () => {
     expect(hit).toEqual([3]);
   });
 
-  it('布尔三态：不限 / 是 / 否', () => {
-    expect(sample.filter((r) => matchesFilters(r, filters({ 拥有电子版: true }))).map((r) => r.id)).toEqual([2]);
-    expect(sample.filter((r) => matchesFilters(r, filters({ 拥有电子版: false }))).map((r) => r.id)).toEqual([1, 3, 4]);
+  it('电子版三态多选：不限 / 有 / 没有 / 不确定', () => {
+    expect(sample.filter((r) => matchesFilters(r, filters({ 电子版: ['有'] }))).map((r) => r.id)).toEqual([1, 2]);
+    expect(sample.filter((r) => matchesFilters(r, filters({ 电子版: ['没有'] }))).map((r) => r.id)).toEqual([3, 4]);
+    expect(sample.filter((r) => matchesFilters(r, filters({ 电子版: ['不确定'] }))).map((r) => r.id)).toEqual([]);
+    expect(sample.filter((r) => matchesFilters(r, filters({ 电子版: ['有', '没有'] }))).length).toBe(4);
     expect(sample.filter((r) => matchesFilters(r, filters())).length).toBe(4);
+  });
+
+  it('纸质版三态多选独立生效', () => {
+    expect(sample.filter((r) => matchesFilters(r, filters({ 纸质版: ['不确定'] }))).map((r) => r.id)).toEqual([3]);
+    expect(sample.filter((r) => matchesFilters(r, filters({ 纸质版: ['没有'] }))).map((r) => r.id)).toEqual([1, 2, 4]);
   });
 
   it('清空条件后恢复全量', () => {
@@ -163,20 +171,24 @@ describe('看板统计', () => {
     expect(stats.categoryUncategorized).toBe(1);
   });
 
-  it('KPI 与基础计数一致', () => {
+  it('KPI 与基础计数一致（v4：不再有「有教程」口径）', () => {
     const stats = computeStats(sample);
     expect(stats.total).toBe(4);
-    expect(stats.有教程).toBe(1);
     expect(stats.做过).toBe(1);
     expect(stats.想做).toBe(1);
+    expect('有教程' in (stats as unknown as Record<string, unknown>)).toBe(false);
   });
 
-  it('拥有形态四分类互斥且完备', () => {
+  it('拥有形态分桶互斥且完备（四类确定态 + 待确认）', () => {
     const stats = computeStats(sample);
     const sum = stats.ownership.reduce((s, o) => s + o.value, 0);
     expect(sum).toBe(4);
-    expect(stats.ownership.find((o) => o.name === '仅电子版')?.value).toBe(1);
-    expect(stats.ownership.find((o) => o.name === '都没有')?.value).toBe(3);
+    expect(stats.ownership.find((o) => o.name === '仅电子版')?.value).toBe(2);
+    expect(stats.ownership.find((o) => o.name === '两者都有')?.value).toBe(0);
+    expect(stats.ownership.find((o) => o.name === '仅纸质版')?.value).toBe(0);
+    expect(stats.ownership.find((o) => o.name === '都没有')?.value).toBe(1);
+    // 三态下「不确定」单独归入「待确认」，不并入「都没有」
+    expect(stats.ownership.find((o) => o.name === '待确认')?.value).toBe(1);
   });
 
   it('季节空值计入未填', () => {

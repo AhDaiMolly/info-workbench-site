@@ -3,52 +3,156 @@
  *
  * 规则：
  *   1. 只向前兼容——schemaVersion 落后时按字段补默认值，不做破坏性转换
- *   2. 只做加法迁移——只新增字段/选项，禁止重命名或删除既有字段
- *   3. 迁移函数是纯函数，可单测、可重放
- *   4. 写回前校验，不通过则拒绝写回并给出具体字段错误
- *   5. 读到更高 schemaVersion 时进入只读模式，不做降级写入
+ *   2. 迁移函数是纯函数，可单测、可重放、可重复执行（幂等）
+ *   3. 写回前校验，不通过则拒绝写回并给出具体字段错误
+ *   4. 读到更高 schemaVersion 时进入只读模式，不做降级写入
+ *
+ * v3（schemaVersion 1 → 2）只做「结构性」迁移：
+ *   · 「拥有电子版」（布尔）→「电子版」（枚举三态：有 / 没有 / 不确定）
+ *   · 「拥有纸质版」（布尔）→「纸质版」（枚举三态）
+ *   · 删除「关联」「电子版缺码」
+ *
+ * ⚠️ v3 不在页面侧改动「款式」「分类」的取值：
+ *   「秋衣秋裤 → 打底衣」「通用 → 女装/男装/童装」属于**内容**迁移，
+ *   必须先经用户逐条确认，再由数据仓迁移脚本执行（见 data/tools/migrate-v3.mjs）。
+ *
+ * v4（schemaVersion 2 → 3）：回收站整体移除
+ *   · 旧数据里带 deletedAt 标记的记录 = 已被删除的记录 → 加载时物理移除
+ *   · 其余记录清掉 deletedAt 字段（v4 的记录模型不再有软删标记）
+ *   · 既有软删记录在加载时会被清掉（不可恢复，属回收站移除的既定语义）；
+ *     数据仓侧另有 migrate-v4.mjs 先做归档再写回，避免静默丢弃。
+ *
+ * ⚠️ v4 修复（同步被阻断的根因，见交付说明 v4「根因」一节）：
+ *   写回校验**只针对有效记录**：
+ *     · 空壳记录（名称为空）不参与校验 —— 这类记录来自最初的表格导入，
+ *       不是用户录入的；把它算进必填校验会让同步永久卡死（用户无法自行修复远端文件）。
+ *     · 软删记录不参与校验（v4 已无软删，保留判断仅为兼容旧缓存）。
+ *   空壳记录不被静默删除，而是被识别出来交给用户一键清理（见 store 的 cleanupShellRecords）。
  */
 
 import type { FieldDef, RecordItem, RecordsFile, Schema } from '../types';
+import {
+  OWNERSHIP_OPTIONS, REMOVED_FIELD_KEYS, defaultValueFor, LEGACY_MULTI_VALUES,
+} from '../schema';
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 3;
 
-/** 补齐后的默认值（新增字段的默认状态） */
-function defaultsFor(field: FieldDef): unknown {
-  switch (field.type) {
-    case 'multi':
-    case 'tags':
-    case 'refs':
-      return [];
-    case 'boolean':
-      return false;
-    case 'number':
-      return 0;
-    default:
-      return '';
-  }
+/** 旧键 → 新键（布尔改枚举） */
+const LEGACY_OWNERSHIP_KEYS: Array<[string, string]> = [
+  ['拥有电子版', '电子版'],
+  ['拥有纸质版', '纸质版'],
+];
+
+/**
+ * 把「电子版 / 纸质版」的任意取值归一为枚举三态。
+ *   true → 有 ／ false → 没有 ／ '' → ''（未填，保留）／ 其它 → 不确定
+ */
+export function normalizeOwnershipValue(value: unknown): string {
+  if (value === true) return '有';
+  if (value === false) return '没有';
+  const s = String(value ?? '').trim();
+  if (s === '') return '';
+  if (OWNERSHIP_OPTIONS.includes(s)) return s;
+  return '不确定';
 }
 
 /**
- * schemaVersion 0 → 1：补齐 19 个目标字段的缺省值。
- * 纯函数：相同输入必得相同输出。
+ * schemaVersion 1 → 2：字段改名（布尔 → 枚举三态）+ 删除废弃字段。
+ * 纯函数且幂等：对已迁移的数据再执行一次，结果完全不变。
  */
-export function migrate_0_to_1(records: RecordItem[], schema: Schema): RecordItem[] {
+export function migrate_1_to_2(records: RecordItem[], schema: Schema): RecordItem[] {
   return records.map((r) => {
-    const out = { ...r } as RecordItem & Record<string, unknown>;
+    const out = { ...(r as unknown as Record<string, unknown>) } as Record<string, unknown>;
+
+    for (const [oldKey, newKey] of LEGACY_OWNERSHIP_KEYS) {
+      const legacy = out[oldKey];
+      const current = out[newKey];
+      if (legacy !== undefined) {
+        // 旧数据：以旧键为准；新键已存在时以新键为准（幂等）
+        out[newKey] = normalizeOwnershipValue(current !== undefined ? current : legacy);
+        delete out[oldKey];
+      } else if (current !== undefined) {
+        out[newKey] = normalizeOwnershipValue(current);
+      } else {
+        // 两个键都没有 → 第三态
+        out[newKey] = '不确定';
+      }
+    }
+
+    // 删除废弃字段（关联 / 电子版缺码）
+    for (const k of REMOVED_FIELD_KEYS) delete out[k];
+
+    // 其余字段按 schema 补默认值（不覆盖已有值）
     for (const f of schema.fields) {
       const key = f.jsonKey;
       if (!(key in out) || out[key] === undefined || out[key] === null) {
-        (out as Record<string, unknown>)[key] = defaultsFor(f);
+        out[key] = defaultValueFor(f);
       }
     }
-    if (out.deletedAt === undefined) out.deletedAt = null;
-    return out;
+    return out as unknown as RecordItem;
   });
 }
 
+/**
+ * schemaVersion 2 → 3：回收站移除。
+ *
+ *   · 带 deletedAt 标记的记录 = 已被用户删除的记录 → **物理移除**（v4 无回收站可恢复）
+ *   · 其余记录清掉 deletedAt 字段
+ *
+ * 纯函数；幂等（再执行一次不会产生任何变化）。
+ * ⚠️ 软删记录是「用户已删除」的数据，物理移除是回收站移除的既定语义；
+ *     数据仓侧会先用 migrate-v4.mjs 归档，再写回，避免静默丢弃。
+ */
+export function migrate_2_to_3(records: RecordItem[], schema: Schema): RecordItem[] {
+  const kept: RecordItem[] = [];
+  for (const r of records) {
+    const rec = r as unknown as Record<string, unknown>;
+    const legacyDeletedAt = rec.deletedAt;
+    // 已软删的记录：直接移除（v4 无回收站）
+    if (legacyDeletedAt !== undefined && legacyDeletedAt !== null && legacyDeletedAt !== '') {
+      continue;
+    }
+    const out = { ...rec } as Record<string, unknown>;
+    delete out.deletedAt;
+    for (const f of schema.fields) {
+      const key = f.jsonKey;
+      if (!(key in out) || out[key] === undefined || out[key] === null) {
+        out[key] = defaultValueFor(f);
+      }
+    }
+    kept.push(out as unknown as RecordItem);
+  }
+  return kept;
+}
+
+/**
+ * 结构归一（幂等）：无论文件自报的 schemaVersion 是多少，
+ * 只要记录里还留着旧键/旧类型，就地修正成当前结构。
+ *
+ * 作用：旧数据（旧键名、旧布尔字段）加载后不会白屏、不会丢字段，
+ * 也保证「数据仓还没迁移」时页面依然可用。
+ *
+ * v4：顺带清掉软删残留 —— 带 deletedAt 标记的记录直接移除，其余记录删掉该键。
+ */
+export function normalizeToCurrent(records: RecordItem[], schema: Schema): RecordItem[] {
+  const needsShapeFix = records.some((r) => {
+    const rec = r as unknown as Record<string, unknown>;
+    return LEGACY_OWNERSHIP_KEYS.some(([oldKey]) => oldKey in rec)
+      || REMOVED_FIELD_KEYS.some((k) => k in rec)
+      || 'deletedAt' in rec;
+  });
+  if (!needsShapeFix) return records;
+  // ⚠️ 顺序：先做「改名」（1 → 2），再做「软删清理」（2 → 3）。
+  // 反过来会踩坑 —— 2 → 3 会先给缺失字段补默认值，把布尔旧值盖成「不确定」，
+  // 旧数据里的「拥有电子版: true」就再也还原不回「有」了。
+  const renamed = migrate_1_to_2(records, schema);
+  return migrate_2_to_3(renamed, schema);
+}
+
 const MIGRATIONS: Record<number, (records: RecordItem[], schema: Schema) => RecordItem[]> = {
-  0: migrate_0_to_1,
+  0: (records, schema) => migrate_1_to_2(records, schema),
+  1: migrate_1_to_2,
+  2: migrate_2_to_3,
 };
 
 export interface MigrationResult {
@@ -77,12 +181,31 @@ export function applyMigrations(file: RecordsFile, schema: Schema): MigrationRes
     changed = true;
   }
 
+  // 版本号自报为最新、但记录仍是旧结构时也要修正（幂等）
+  const normalized = normalizeToCurrent(records, schema);
+  if (normalized !== records) changed = true;
+  records = normalized;
+
   return {
     records,
     schemaVersion: version,
     readOnly: version > CURRENT_SCHEMA_VERSION,
     changed,
   };
+}
+
+/**
+ * 扫描记录里仍存在的旧字段（v3 已废弃 / 已改名的键）。
+ * 数据仓尚未执行 v3 迁移时，写回必须先检查这个 —— 否则会把待归档的旧数据悄悄抹掉。
+ */
+export function findLegacyFieldKeys(records: RecordItem[]): string[] {
+  const hits = new Set<string>();
+  for (const r of records) {
+    const rec = r as unknown as Record<string, unknown>;
+    for (const [oldKey] of LEGACY_OWNERSHIP_KEYS) if (oldKey in rec) hits.add(oldKey);
+    for (const k of REMOVED_FIELD_KEYS) if (k in rec) hits.add(k);
+  }
+  return [...hits];
 }
 
 /* ------------------------------ 写回前校验 ------------------------------ */
@@ -93,16 +216,56 @@ export interface ValidationIssue {
   问题: string;
 }
 
+/* --------------------------- 有效记录 / 空壳记录 --------------------------- */
+
 /**
- * 写回前校验：必填、枚举合法性、多值顺序、引用完整性。
- * 返回问题清单（空数组 = 通过）。
+ * 空壳记录：名称为空的记录。
+ *
+ * 来源：最初的表格导入里存在「只填了品牌、名称留空」的行（如 795 号记录）。
+ * 这类记录不是用户录入的，用户在界面上也从未见过它。
+ *
+ * ⚠️ v4 之前，validateRecords 会把它算进必填校验 → 同步被永久阻断，
+ *    而用户既无法在界面上修复它，也无法删除它（它没有名称，也无从定位）。
+ *    v4 起：空壳记录不参与写回校验，改为识别出来交给用户一键清理。
+ */
+export function isShellRecord(r: RecordItem): boolean {
+  return String(r.名称 ?? '').trim() === '';
+}
+
+/** 软删残留（v3 及更早的数据里带 deletedAt 标记） */
+export function isLegacyDeleted(r: RecordItem): boolean {
+  const legacy = (r as unknown as Record<string, unknown>).deletedAt;
+  return legacy !== undefined && legacy !== null && legacy !== '';
+}
+
+/**
+ * 参与写回校验的记录 = 「有效记录」。
+ *
+ * 排除两类：
+ *   · 空壳记录（名称为空）—— 导入遗留，用户无法自行修复，不该阻断同步
+ *   · 软删记录 —— v4 已移除回收站；旧缓存里的残留不参与校验
+ */
+export function isValidatableRecord(r: RecordItem): boolean {
+  if (isLegacyDeleted(r)) return false;
+  return !isShellRecord(r);
+}
+
+/** 找出全部空壳记录（供界面提示与一键清理使用） */
+export function findShellRecords(records: RecordItem[]): RecordItem[] {
+  return records.filter((r) => !isLegacyDeleted(r) && isShellRecord(r));
+}
+
+/**
+ * 写回前校验：必填、枚举合法性、多值顺序。
+ * v3：不再有「引用（refs）」字段，关联完整性校验随之移除。
+ * v4：**只校验有效记录**（排除空壳记录与软删残留），返回问题清单（空数组 = 通过）。
  */
 export function validateRecords(records: RecordItem[], schema: Schema): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const byId = new Map<number, RecordItem>();
-  for (const r of records) byId.set(r.id, r);
 
   for (const r of records) {
+    // v4：空壳记录 / 软删残留不参与校验（否则同步会被无法修复的脏数据永久卡死）
+    if (!isValidatableRecord(r)) continue;
     for (const f of schema.fields) {
       const key = f.jsonKey;
       const value = (r as unknown as Record<string, unknown>)[key];
@@ -125,10 +288,15 @@ export function validateRecords(records: RecordItem[], schema: Schema): Validati
 
       if (f.type === 'multi' && Array.isArray(value) && f.ordered && f.options?.length) {
         const order = f.options;
-        const positions = value.map((v) => order.indexOf(String(v)));
-        if (positions.some((p) => p < 0)) {
+        // 旧取值（如「通用」）只做兼容容忍，不参与顺序判定，也不报错
+        const legacy = LEGACY_MULTI_VALUES[f.key] ?? [];
+        const unknown = value.filter((v) => !order.includes(String(v)) && !legacy.includes(String(v)));
+        if (unknown.length) {
           issues.push({ 记录ID: r.id, 字段: f.label, 问题: '包含不在选项集内的取值' });
         } else {
+          const positions = value
+            .filter((v) => order.includes(String(v)))
+            .map((v) => order.indexOf(String(v)));
           for (let i = 1; i < positions.length; i += 1) {
             if (positions[i] < positions[i - 1]) {
               issues.push({ 记录ID: r.id, 字段: f.label, 问题: '多值顺序未按固定选项序排列' });
@@ -137,21 +305,20 @@ export function validateRecords(records: RecordItem[], schema: Schema): Validati
           }
         }
       }
-
-      if (f.type === 'refs' && Array.isArray(value)) {
-        for (const ref of value) {
-          const refId = typeof ref === 'number' ? ref : Number(ref);
-          if (!Number.isFinite(refId) || !byId.has(refId)) {
-            issues.push({ 记录ID: r.id, 字段: f.label, 问题: `关联指向不存在的记录 #${String(ref)}` });
-          }
-        }
-      }
     }
   }
   return issues;
 }
 
-/** 新记录 ID：取当前最大值 + 1 */
-export function nextRecordId(records: RecordItem[]): number {
-  return records.reduce((max, r) => Math.max(max, r.id), 0) + 1;
+/**
+ * 新记录 ID：取「当前所有记录 ID」与「历史发号水位」的较大者 + 1。
+ *
+ * v4：v3 之前只取记录里的最大 ID。回收站移除后记录被物理删除，
+ * 若只看现存记录，删掉最大号记录后新记录会**复用旧 ID**，
+ * 与同步基线里的历史记录撞号（三方合并时会被判成「同一记录被改」）。
+ * 因此引入持久化的发号水位（store/persist.ts 的 lastIssuedId），保证 ID 只增不复用。
+ */
+export function nextRecordId(records: RecordItem[], lastIssuedId = 0): number {
+  const maxInRecords = records.reduce((max, r) => Math.max(max, r.id), 0);
+  return Math.max(maxInRecords, lastIssuedId) + 1;
 }

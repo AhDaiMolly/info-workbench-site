@@ -1,10 +1,16 @@
 /**
  * 信息汇总工作台 · 设置页（PRD 5.8 / 5.9 / AC-16 / AC-20）
- * 令牌只写入浏览器本地存储；界面明示风险与最小权限建议；可测试连接、清除配置。
+ * 令牌只写入浏览器本地存储；可测试连接、清除配置。
+ *
+ * v4 变更：
+ *   · 移除「安全须知」卡片
+ *   · 「同步」与「备份」合并为「同步和备份」，并新增操作日志（最近 3 条）
+ *   · 新增「数据管理」区：导出入口（全部 / 当前筛选，JSON / Excel）+ 一键清理空壳记录
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../store/store';
+import { findShellRecords } from '../../store/migrations';
 
 export function SettingsView() {
   const app = useApp();
@@ -21,6 +27,9 @@ export function SettingsView() {
       setSessionOnly(app.config.sessionOnly);
     }
   }, [app.config]);
+
+  // v4：数据管理区 —— 识别「名称为空」的导入遗留记录，供一键清理
+  const shellRecords = useMemo(() => findShellRecords(app.records), [app.records]);
 
   const statusText = !app.config
     ? '未配置'
@@ -128,25 +137,11 @@ export function SettingsView() {
         ) : null}
       </div>
 
+      {/* v4：「同步」与「备份」合并，并新增操作日志（只保留最近 3 条） */}
       <div className="iw-settings-card">
-        <h2 className="iw-settings-title">同步</h2>
+        <h2 className="iw-settings-title">同步和备份</h2>
         <p className="iw-settings-desc">
           改动会先存在本地，点「同步」后才会写回仓库。未同步改动：<b>{app.pending.length}</b> 处。
-        </p>
-        <div className="iw-actions-row">
-          <button className="iw-btn iw-btn-primary" type="button" onClick={() => void app.actions.syncNow()} disabled={!app.config || app.syncStatus === 'syncing'}>
-            {app.syncStatus === 'syncing' ? '同步中…' : '同步到 GitHub'}
-          </button>
-          <button className="iw-btn" type="button" onClick={() => void app.actions.pull()} disabled={!app.config}>
-            从仓库重新拉取
-          </button>
-          {app.syncMessage ? <span className="iw-result-count">{app.syncMessage}</span> : null}
-        </div>
-      </div>
-
-      <div className="iw-settings-card">
-        <h2 className="iw-settings-title">备份</h2>
-        <p className="iw-settings-desc">
           距上次成功同步超过设定天数时，打开工作台会出现备份提醒横幅；同时仓库内每周自动生成一份快照（保留 26 周）。
         </p>
         <div className="iw-field" style={{ maxWidth: 260 }}>
@@ -162,21 +157,80 @@ export function SettingsView() {
           />
         </div>
         <div className="iw-actions-row">
-          <button className="iw-btn" type="button" onClick={() => app.actions.exportJson('all')}>导出全部 JSON</button>
-          <button className="iw-btn" type="button" onClick={() => app.actions.exportXlsx('all')}>导出全部 Excel</button>
+          <button className="iw-btn iw-btn-primary" type="button" onClick={() => void app.actions.syncNow()} disabled={!app.config || app.syncStatus === 'syncing'}>
+            {app.syncStatus === 'syncing' ? '同步中…' : '同步到 GitHub'}
+          </button>
+          <button className="iw-btn" type="button" onClick={() => void app.actions.pull()} disabled={!app.config}>
+            从仓库重新拉取
+          </button>
+          {app.syncMessage ? <span className="iw-result-count">{app.syncMessage}</span> : null}
+        </div>
+
+        <div className="iw-log-block">
+          <div className="iw-log-title">操作日志（最近 3 条）</div>
+          {app.actionLog.length ? (
+            <ul className="iw-log-list">
+              {app.actionLog.map((e, i) => (
+                <li className="iw-log-item" key={`${e.时间}-${i}`}>
+                  <span className="iw-log-time">{formatLogTime(e.时间)}</span>
+                  <span className="iw-log-type">{e.类型}</span>
+                  <span className={`iw-log-result ${e.结果 === '成功' ? 'iw-log-ok' : 'iw-log-bad'}`}>{e.结果}</span>
+                  <span className="iw-log-note">{e.说明}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="iw-log-empty">还没有同步或备份记录。日志只存在这台电脑的浏览器里，最多保留 3 条。</div>
+          )}
         </div>
       </div>
 
-      <div className="iw-settings-card" style={{ borderColor: '#f0d5d2', background: 'var(--iw-danger-soft)' }}>
-        <h2 className="iw-settings-title">安全须知</h2>
-        <ul className="iw-settings-desc" style={{ paddingLeft: 18, marginBottom: 0 }}>
-          <li>令牌相当于「能改写数据仓库内容的钥匙」，不要截图、不要发到群里、不要写进文档。</li>
-          <li>只授予<b>一个私有仓库</b>的 <span className="iw-code">Contents: Read and write</span> 权限。</li>
-          <li>共享电脑请勾选「仅本次会话有效」，用完点「清除配置」。</li>
-          <li>清除配置不会删除浏览器里的本地数据缓存，必要时请手动清除浏览器站点数据。</li>
-          <li>建议给 GitHub 账号开启两步验证，并每 30～90 天轮换一次令牌。</li>
-        </ul>
+      {/* v4：导出入口统一收在这里（列表页不再放导出按钮） */}
+      <div className="iw-settings-card">
+        <h2 className="iw-settings-title">数据管理</h2>
+        <p className="iw-settings-desc">
+          导出备份（文件下载到本机）。「全部」导出所有记录；「当前筛选」按列表页的筛选与搜索结果导出，两者口径一致。
+        </p>
+        <div className="iw-actions-row">
+          <button className="iw-btn" type="button" onClick={() => app.actions.exportJson('all')}>导出全部 JSON</button>
+          <button className="iw-btn" type="button" onClick={() => app.actions.exportXlsx('all')}>导出全部 Excel</button>
+          <button className="iw-btn" type="button" onClick={() => app.actions.exportJson('filtered')}>导出当前筛选 JSON</button>
+          <button className="iw-btn" type="button" onClick={() => app.actions.exportXlsx('filtered')}>导出当前筛选 Excel</button>
+        </div>
+
+        <div className="iw-log-block">
+          <div className="iw-log-title">数据体检</div>
+          <p className="iw-settings-desc" style={{ marginBottom: 8 }}>
+            {shellRecords.length
+              ? `检测到 ${shellRecords.length} 条「名称为空」的导入遗留记录（记录号：${shellRecords.map((r) => `#${r.id}`).join('、')}）。`
+                + '它们来自最初的表格导入，不是你录入的；本版已不再让它们阻断同步。'
+              : '没有发现「名称为空」的导入遗留记录。'}
+          </p>
+          <div className="iw-actions-row">
+            <button
+              className="iw-btn"
+              type="button"
+              disabled={!shellRecords.length}
+              onClick={() => app.actions.cleanupShellRecords()}
+            >
+              一键清理空壳记录（{shellRecords.length}）
+            </button>
+          </div>
+          {shellRecords.length ? (
+            <div className="iw-field-hint" style={{ marginTop: 8 }}>
+              清理只删除「名称为空」的空壳记录，其余记录不受影响；清理后可在列表页点「同步」写回仓库。
+            </div>
+          ) : null}
+        </div>
       </div>
     </>
   );
+}
+
+/** 操作日志时间：本地化到分钟 */
+function formatLogTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso || '—';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

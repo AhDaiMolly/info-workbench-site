@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import type { Filters, SortKey, SortSpec } from './types';
 import { EMPTY_FILTERS } from './types';
 
-export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'trash' | 'editor';
+export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'editor';
 
 export interface Route {
   view: ViewName;
@@ -23,8 +23,10 @@ export interface Route {
 
 const MULTI_KEYS: Array<keyof Filters> = [
   '品牌', '分类', '款式', '季节', '教程', '推荐', '想做', '电子版尺码组',
+  // v3：电子版 / 纸质版 由布尔三态改为枚举三态，走多值参数（可同时筛「有」「不确定」）
+  '电子版', '纸质版',
 ];
-const BOOL_KEYS: Array<keyof Filters> = ['拥有电子版', '拥有纸质版', '电子版缺码', '做过'];
+const BOOL_KEYS: Array<keyof Filters> = ['做过'];
 
 const FILTER_PARAM: Record<string, string> = {
   品牌: 'brand',
@@ -35,14 +37,16 @@ const FILTER_PARAM: Record<string, string> = {
   推荐: 'rec',
   想做: 'plan',
   电子版尺码组: 'size',
-  拥有电子版: 'hasE',
-  拥有纸质版: 'hasP',
-  电子版缺码: 'lack',
+  电子版: 'elec',
+  纸质版: 'paper',
   做过: 'done',
 };
 
 function parseFilters(params: URLSearchParams): Filters {
-  const filters: Filters = { ...EMPTY_FILTERS, 品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 想做: [], 电子版尺码组: [] };
+  const filters: Filters = {
+    ...EMPTY_FILTERS, 品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 想做: [],
+    电子版尺码组: [], 电子版: [], 纸质版: [],
+  };
   for (const key of MULTI_KEYS) {
     const raw = params.get(FILTER_PARAM[key]);
     if (!raw) continue;
@@ -70,7 +74,6 @@ export function parseHash(hash: string): Route {
   if (seg[0] === 'detail') { view = 'detail'; id = Number(seg[1]) || null; }
   else if (seg[0] === 'dashboard') view = 'dashboard';
   else if (seg[0] === 'settings') view = 'settings';
-  else if (seg[0] === 'trash') view = 'trash';
   else if (seg[0] === 'editor') { view = 'editor'; id = seg[1] && seg[1] !== 'new' ? Number(seg[1]) || null : null; }
 
   const sortKey = (params.get('sort') || '更新时间') as SortKey;

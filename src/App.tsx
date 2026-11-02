@@ -10,9 +10,9 @@ import { DetailView } from './features/detail/DetailView';
 import { EditorForm } from './features/editor/EditorForm';
 import { DashboardView } from './features/dashboard/DashboardView';
 import { SettingsView } from './features/settings/SettingsView';
-import { TrashView } from './features/trash/TrashView';
 import { Modal } from './components/Modal';
 import { APP_NAME } from './schema';
+import { findShellRecords } from './store/migrations';
 
 export function App() {
   const app = useApp();
@@ -34,16 +34,18 @@ export function App() {
     return days >= app.backupIntervalDays;
   }, [app.pending.length, app.lastSyncedAt, app.backupIntervalDays, app.config]);
 
-  const navItems: Array<{ view: 'list' | 'dashboard' | 'trash' | 'settings'; label: string }> = [
+  const navItems: Array<{ view: 'list' | 'dashboard' | 'settings'; label: string }> = [
     { view: 'list', label: '列表' },
     { view: 'dashboard', label: '看板' },
-    { view: 'trash', label: '回收站' },
     { view: 'settings', label: '设置' },
   ];
 
-  const go = (view: 'list' | 'dashboard' | 'trash' | 'settings') => {
+  const go = (view: 'list' | 'dashboard' | 'settings') => {
     navigate({ view, filters: app.filters, query: app.query, sort: app.sort });
   };
+
+  // v4：识别「名称为空」的导入遗留空壳记录 —— 不再阻断同步，但提示用户可一键清理
+  const shellCount = useMemo(() => findShellRecords(app.records).length, [app.records]);
 
   const statusText = !app.config
     ? '未配置仓库'
@@ -168,11 +170,26 @@ export function App() {
           </div>
         ) : null}
 
+        {shellCount > 0 ? (
+          <div className="iw-banner iw-banner-warn">
+            <div style={{ flex: 1 }}>
+              <div className="iw-banner-title">发现 {shellCount} 条名称为空的导入遗留记录</div>
+              <div className="iw-banner-text">
+                这些记录来自最初的表格导入（不是你录入的），已不再阻断同步。可到「设置 › 数据管理」一键清理，或直接忽略。
+              </div>
+            </div>
+            <div className="iw-banner-actions">
+              <button className="iw-btn iw-btn-sm" type="button" onClick={() => go('settings')}>
+                去处理
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {route.view === 'list' ? <ListView /> : null}
         {route.view === 'detail' ? <DetailView id={route.id} /> : null}
         {route.view === 'editor' ? <EditorForm recordId={route.id} /> : null}
         {route.view === 'dashboard' ? <DashboardView /> : null}
-        {route.view === 'trash' ? <TrashView /> : null}
         {route.view === 'settings' ? <SettingsView /> : null}
       </main>
 

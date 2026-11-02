@@ -25,7 +25,7 @@ export function ListView() {
   const visible = visibleColumns.length ? visibleColumns : DEFAULT_VISIBLE_COLUMNS;
 
   const filtered = useMemo(
-    () => applyQuery(records.filter((r) => !r.deletedAt), filters, query, app.indexes),
+    () => applyQuery(records, filters, query, app.indexes),
     [records, filters, query, app.indexes],
   );
 
@@ -81,17 +81,12 @@ export function ListView() {
         <div>
           <h1 className="iw-page-title">记录列表</h1>
           <p className="iw-page-sub">
-            共 {records.filter((r) => !r.deletedAt).length} 条未删除记录
+            共 {records.length} 条记录
             {app.pending.length ? `，${app.pending.length} 处改动未同步` : ''}
           </p>
         </div>
         <div className="iw-actions-row">
-          <button className="iw-btn" type="button" onClick={() => app.actions.exportJson('filtered')}>
-            导出 JSON
-          </button>
-          <button className="iw-btn" type="button" onClick={() => app.actions.exportXlsx('filtered')}>
-            导出 Excel
-          </button>
+          {/* v4：导出入口统一移到「设置 › 数据管理」，列表页不再放导出按钮 */}
           <button
             className="iw-btn iw-btn-primary"
             type="button"
@@ -115,7 +110,7 @@ export function ListView() {
           value={query}
           onChange={app.actions.setQuery}
           resultCount={filtered.length}
-          totalCount={records.filter((r) => !r.deletedAt).length}
+          totalCount={records.length}
         />
         <span className="iw-result-count">
           当前结果 <b>{filtered.length}</b> 条
@@ -250,14 +245,15 @@ export function ListView() {
         open={pendingDelete !== null}
         title="确认删除这条记录？"
         danger
-        confirmText="移到回收站"
+        confirmText="删除"
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
           if (pendingDelete !== null) app.actions.deleteRecord(pendingDelete);
           setPendingDelete(null);
         }}
       >
-        删除后记录会进入回收站并保留 30 天，期间可以恢复。30 天后将被永久移除。
+        删除后<b>立即从数据中移除</b>（本版没有回收站，无法恢复）。下次同步会把这个删除写回仓库。
+        如需保留副本，请先到「设置 › 数据管理」导出备份。
       </Modal>
     </>
   );

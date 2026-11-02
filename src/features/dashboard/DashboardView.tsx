@@ -19,7 +19,7 @@ export function DashboardView() {
   const { filters, query } = app;
 
   const scoped = useMemo(
-    () => applyQuery(app.records.filter((r) => !r.deletedAt), filters, query, app.indexes),
+    () => applyQuery(app.records, filters, query, app.indexes),
     [app.records, filters, query, app.indexes],
   );
 
@@ -99,7 +99,8 @@ export function DashboardView() {
   }, [stats]);
 
   const ownershipOption = useMemo<echarts.EChartsCoreOption>(() => {
-    const order = ['仅电子版', '两者都有', '仅纸质版', '都没有'];
+    // v3：电子版 / 纸质版 改三态后新增「待确认」桶（任一形态为「不确定」的记录）
+    const order = ['仅电子版', '两者都有', '仅纸质版', '都没有', '待确认'];
     const map = new Map(stats.ownership.map((o) => [o.name, o.value]));
     const data = order.map((name) => ({ name, value: map.get(name) ?? 0 }));
     return {
@@ -138,9 +139,9 @@ export function DashboardView() {
     };
   }, [stats]);
 
+  // v4：移除「有教程」统计口径（KPI 卡片与相关口径一并清理）
   const kpis = [
     { label: '总记录', value: stats.total, note: '当前筛选范围内' },
-    { label: '有教程', value: stats.有教程, note: `占 ${stats.total ? Math.round((stats.有教程 / stats.total) * 100) : 0}%` },
     { label: '做过', value: stats.做过, note: '已实际完成' },
     { label: '想做', value: stats.想做, note: '计划中' },
   ];
@@ -207,7 +208,7 @@ export function DashboardView() {
         <div className="iw-chart-card">
           <div className="iw-chart-card-head">
             <div className="iw-chart-title">拥有形态</div>
-            <div className="iw-chart-note">仅电子版 / 两者都有 / 仅纸质版 / 都没有</div>
+            <div className="iw-chart-note">仅电子版 / 两者都有 / 仅纸质版 / 都没有 / 待确认</div>
           </div>
           <Chart option={ownershipOption} />
         </div>

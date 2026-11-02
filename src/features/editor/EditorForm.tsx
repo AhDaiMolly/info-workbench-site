@@ -1,37 +1,41 @@
 /**
  * 信息汇总工作台 · 录入 / 编辑表单（PRD 5.1 / 5.2 / AC-6 / AC-7）
- * 表单控件由 schema.json 驱动（架构 3.3）：枚举一律下拉/多选，杜绝手写变体。
- * 必填仅「名称」「品牌」两项。
+ *
+ * v3（需求 1）：版面改为五分区，与记录详情页共用同一套分区契约（src/sections.ts）：
+ *   基础信息 / 拥有形态 / 状态及评价 / 备注 / 系统信息
+ *   · 「系统信息」分区在表单页只读展示（记录ID / 创建时间 / 更新时间），不参与编辑与提交
+ * v3（需求 5 / 6 / 7）：季节为下拉单选；电子版 / 纸质版由复选框改为下拉单选（有 / 没有 / 不确定）
+ * v3：枚举字段的「空值默认」改为显式声明（schema.FIELD_DEFAULTS），不再取「最后一个选项」
  */
 
 import { useMemo, useState } from 'react';
 import { useApp } from '../../store/store';
 import { navigate } from '../../router';
 import type { FieldDef, RecordItem } from '../../types';
+import { defaultValueFor } from '../../schema';
+import { buildSectionPlan } from '../../sections';
+import { formatTime } from '../detail/DetailView';
 
 interface Props {
   recordId: number | null;
 }
 
-export function EditorForm({ recordId }: Props) {
+export function EditorForm({ recordId }: { recordId: number | null }) {
   const app = useApp();
   const { filters, query, sort } = app;
   const existing = recordId === null ? null : app.records.find((r) => r.id === recordId) ?? null;
 
   const [values, setValues] = useState<Record<string, unknown>>(() => {
-    if (!existing) {
-      const init: Record<string, unknown> = {};
-      for (const f of app.schema.fields) {
-        if (f.system) continue;
-        init[f.jsonKey] = f.type === 'multi' || f.type === 'tags' || f.type === 'refs' ? []
-          : f.type === 'boolean' ? false
-            : f.type === 'enum' && f.options?.length ? f.options[f.options.length - 1] : '';
-      }
-      return init;
-    }
     const init: Record<string, unknown> = {};
     for (const f of app.schema.fields) {
-      init[f.jsonKey] = (existing as unknown as Record<string, unknown>)[f.jsonKey];
+      if (f.system) continue;
+      if (!existing) {
+        init[f.jsonKey] = defaultValueFor(f);
+      } else {
+        const v = (existing as unknown as Record<string, unknown>)[f.jsonKey];
+        // 旧记录可能缺字段（数据仓尚未迁移）→ 用同一套默认值补齐，避免表单出现 undefined
+        init[f.jsonKey] = v === undefined ? defaultValueFor(f) : v;
+      }
     }
     return init;
   });
@@ -39,8 +43,14 @@ export function EditorForm({ recordId }: Props) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [tagDraft, setTagDraft] = useState('');
 
+  // v3：五分区（与详情页一致）；系统信息分区只读，不进可编辑字段集
+  const sectionPlan = useMemo(() => buildSectionPlan(app.schema), [app.schema]);
   const editableFields = useMemo(
     () => app.schema.fields.filter((f) => !f.system && !f.readonly),
+    [app.schema.fields],
+  );
+  const systemFields = useMemo(
+    () => app.schema.fields.filter((f) => f.system),
     [app.schema.fields],
   );
 
@@ -77,12 +87,20 @@ export function EditorForm({ recordId }: Props) {
       first?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    const payload = { ...values } as Partial<RecordItem>;
+    // 系统字段不参与提交（只读）
+    const payload: Record<string, unknown> = {};
+    for (const f of editableFields) payload[f.jsonKey] = values[f.jsonKey];
+    const typed = payload as Partial<RecordItem>;
     if (existing) {
-      app.actions.updateRecord(existing.id, payload);
+      app.actions.updateRecord(existing.id, typed);
       navigate({ view: 'detail', id: existing.id, filters, query, sort });
     } else {
-      const newId = app.actions.addRecord(payload);
+      const newId = app.actions.addRecord(typed);
+      // v4：store 层再兜一道 —— 名称为空时不会创建记录（不会产生空壳记录）
+      if (newId === null) {
+        setErrors({ 名称: '「名称」为必填项，未创建这条记录。' });
+        return;
+      }
       navigate({ view: 'detail', id: newId, filters, query, sort });
     }
   };
@@ -97,6 +115,7 @@ export function EditorForm({ recordId }: Props) {
             <>
               <select
                 className="iw-select"
+                aria-label={f.label}
                 value={options.includes(String(value)) ? String(value) : '__custom__'}
                 onChange={(e) => {
                   if (e.target.value === '__custom__') setValue(f.jsonKey, '');
@@ -118,9 +137,12 @@ export function EditorForm({ recordId }: Props) {
             </>
           );
         }
+        // v3：枚举一律下拉单选（季节 / 电子版 / 纸质版 / 教程 / 推荐 / 想做）
         return (
           <select
             className="iw-select"
+            aria-label={f.label}
+            id={`fld-${f.jsonKey}`}
             value={String(value ?? '')}
             onChange={(e) => setValue(f.jsonKey, e.target.value)}
           >
@@ -132,10 +154,9 @@ export function EditorForm({ recordId }: Props) {
       case 'multi': {
         const list = (value as string[]) ?? [];
         const options = f.options ?? [];
-        const ordered = f.ordered ? options : options;
         return (
           <div className="iw-chip-group">
-            {ordered.map((o) => (
+            {options.map((o) => (
               <button
                 key={o}
                 type="button"
@@ -214,12 +235,14 @@ export function EditorForm({ recordId }: Props) {
         return f.long ? (
           <textarea
             className="iw-textarea"
+            aria-label={f.label}
             value={String(value ?? '')}
             onChange={(e) => setValue(f.jsonKey, e.target.value)}
           />
         ) : (
           <input
             className="iw-input"
+            id={`fld-${f.jsonKey}`}
             value={String(value ?? '')}
             onChange={(e) => setValue(f.jsonKey, e.target.value)}
           />
@@ -229,6 +252,7 @@ export function EditorForm({ recordId }: Props) {
         return (
           <input
             className="iw-input"
+            aria-label={f.label}
             value={String(value ?? '')}
             onChange={(e) => setValue(f.jsonKey, e.target.value)}
           />
@@ -262,20 +286,47 @@ export function EditorForm({ recordId }: Props) {
       </div>
 
       <div className="iw-settings-card" style={{ maxWidth: 'none' }}>
-        <div className="iw-form-grid">
-          {editableFields.map((f) => (
-            <div key={f.jsonKey} className={`iw-field${f.long ? ' iw-span-2' : ''}`}>
-              <label className="iw-label" htmlFor={`fld-${f.jsonKey}`}>
-                {f.label}
-                {f.required ? <span className="iw-req">*</span> : null}
-              </label>
-              {renderControl(f)}
-              {errors[f.jsonKey] ? (
-                <div className="iw-field-error">{errors[f.jsonKey]}</div>
-              ) : null}
-            </div>
-          ))}
-        </div>
+        {sectionPlan.map((section) => (
+          <div className="iw-form-section" key={section.title}>
+            <div className="iw-detail-group-title">{section.title}</div>
+            {section.title === '系统信息' ? (
+              <div className="iw-detail-grid">
+                {systemFields.map((f) => {
+                  const raw = (existing as unknown as Record<string, unknown> | null)?.[f.jsonKey];
+                  return (
+                    <div className="iw-kv" key={f.key}>
+                      <span className="iw-kv-key">{f.label}</span>
+                      <span className="iw-kv-val">
+                        {f.type === 'datetime' ? formatTime(String(raw ?? '')) : String(raw ?? '—')}
+                      </span>
+                    </div>
+                  );
+                })}
+                <div className="iw-kv">
+                  <span className="iw-kv-key">记录ID</span>
+                  <span className="iw-kv-val">{existing ? existing.id : '（保存后生成）'}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="iw-form-grid">
+                {section.fields
+                  .filter((f) => !f.system && !f.readonly)
+                  .map((f) => (
+                    <div key={f.jsonKey} className={`iw-field${f.long ? ' iw-span-2' : ''}`}>
+                      <label className="iw-label" htmlFor={`fld-${f.jsonKey}`}>
+                        {f.label}
+                        {f.required ? <span className="iw-req">*</span> : null}
+                      </label>
+                      {renderControl(f)}
+                      {errors[f.jsonKey] ? (
+                        <div className="iw-field-error">{errors[f.jsonKey]}</div>
+                      ) : null}
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        ))}
 
         <div className="iw-actions-row" style={{ marginTop: 24, justifyContent: 'flex-end' }}>
           <button

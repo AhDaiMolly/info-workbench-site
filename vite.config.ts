@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 /**
@@ -29,5 +29,27 @@ export default defineConfig({
   preview: {
     port: 4173,
     host: '0.0.0.0',
+  },
+  test: {
+    // 纯函数测试跑在 node；*.dom.test.tsx 跑在 jsdom（表单分区 / 单选交互）
+    // 注：vitest 4 已移除 environmentMatchGlobs，等价写法是 projects
+    globals: true,
+    projects: [
+      {
+        test: {
+          name: 'unit',
+          environment: 'node',
+          include: ['src/**/*.test.ts'],
+        },
+      },
+      {
+        plugins: [react()],
+        test: {
+          name: 'dom',
+          environment: 'jsdom',
+          include: ['src/**/*.dom.test.tsx'],
+        },
+      },
+    ],
   },
 });

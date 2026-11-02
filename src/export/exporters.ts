@@ -56,23 +56,17 @@ export function serializeJsonExport(
   return JSON.stringify(buildJsonExport(records, schema, meta, dataVersion), null, 2);
 }
 
-/** 导出列顺序：schema 字段顺序在前，系统字段（记录ID/创建时间/更新时间）在后 */
+/** 导出列顺序：schema 字段顺序在前（v4：不再有 deletedAt 列，回收站已移除） */
 export function exportColumns(schema: Schema): string[] {
-  const cols = schema.fields.map((f) => f.jsonKey);
-  const extra = ['deletedAt'].filter((c) => !cols.includes(c));
-  return [...cols, ...extra];
+  return schema.fields.map((f) => f.jsonKey);
 }
 
-/** 生成 Excel 行数据（多值「、」分隔；布尔「是/否」；deletedAt 单独一列标注） */
+/** 生成 Excel 行数据（多值「、」分隔；布尔「是/否」） */
 export function buildExportRows(records: RecordItem[], schema: Schema): Array<Record<string, string>> {
   const cols = exportColumns(schema);
   return records.map((r) => {
     const row: Record<string, string> = {};
     for (const c of cols) {
-      if (c === 'deletedAt') {
-        row[c] = r.deletedAt ? '已删除' : '';
-        continue;
-      }
       row[c] = displayValue((r as unknown as Record<string, unknown>)[c]);
     }
     return row;

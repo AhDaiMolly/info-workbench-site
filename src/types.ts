@@ -1,8 +1,18 @@
 /**
  * 信息汇总工作台 · 领域模型类型定义
  *
- * 字段口径严格对应 PRD 第 4.2 节的 19 个目标字段（数据文件中的键名与 PRD 一致，
- * 避免映射表与数据文件之间再引入一层编码转换）。
+ * 字段口径对应数据文件的键名（与 PRD 一致，避免映射表与数据文件之间再引入一层编码转换）。
+ *
+ * ⚠️ v3 变更（相对 v2 的 19 字段）：
+ *   · 「拥有电子版」→ 「电子版」，「拥有纸质版」→ 「纸质版」：由布尔改为枚举三态
+ *     （有 / 没有 / 不确定），键名与类型一起改（见交付说明 v3「改名口径」一节）
+ *   · 删除「关联」与「电子版缺码」两个字段
+ *   · 「季节」保持单值枚举（下拉单选），「春秋」为独立选项
+ *
+ * ⚠️ v4 变更（相对 v3）：
+ *   · 删除「回收站 / 软删除」整套机制：记录删除后直接物理删除，不再保留 deletedAt 标记。
+ *     旧数据里残留的 deletedAt 字段在加载时被迁移层清洗（见 store/migrations.ts）。
+ *   · RecordsFile 不再统计 deletedCount（软删口径随回收站一并移除）。
  */
 
 export type FieldType =
@@ -47,30 +57,31 @@ export interface RecordItem {
   款式: string;
   季节: string;
   教程: string;
-  拥有电子版: boolean;
+  /** v3：原「拥有电子版」（布尔）改为枚举三态 —— 有 / 没有 / 不确定 */
+  电子版: string;
   电子版尺码组: string[];
-  电子版缺码: boolean;
-  拥有纸质版: boolean;
+  /** v3：原「拥有纸质版」（布尔）改为枚举三态 —— 有 / 没有 / 不确定 */
+  纸质版: string;
   纸质版尺码: string[];
   推荐: string;
   做过: boolean;
   想做: string;
-  关联: Array<number | string>;
   备注: string;
   创建时间: string;
   更新时间: string;
-  deletedAt: string | null;
+  /**
+   * v4：已移除软删除标记。
+   * 旧数据残留的 deletedAt 由迁移层清洗；这里刻意不再声明，避免任何新代码再依赖它。
+   */
 }
 
 export interface RecordsFile {
   schemaVersion: number;
   dataVersion: number;
   updatedAt: string;
-  /** 未删除（可见）记录条数 —— 口径不含软删记录 */
+  /** 记录总条数（v4：无软删记录，口径 = 实际记录数） */
   recordCount?: number;
-  /** 软删（回收站）记录条数 */
-  deletedCount?: number;
-  /** 记录总条数（含软删） */
+  /** 记录总条数（含全部记录） */
   totalCount?: number;
   records: RecordItem[];
 }
@@ -89,9 +100,10 @@ export interface Filters {
   推荐: string[];
   想做: string[];
   电子版尺码组: string[];
-  拥有电子版: BoolFilter;
-  拥有纸质版: BoolFilter;
-  电子版缺码: BoolFilter;
+  /** v3：原「拥有电子版」布尔三态筛选改为枚举多选（有 / 没有 / 不确定） */
+  电子版: string[];
+  /** v3：原「拥有纸质版」布尔三态筛选改为枚举多选（有 / 没有 / 不确定） */
+  纸质版: string[];
   做过: BoolFilter;
 }
 
@@ -104,9 +116,8 @@ export const EMPTY_FILTERS: Filters = {
   推荐: [],
   想做: [],
   电子版尺码组: [],
-  拥有电子版: undefined,
-  拥有纸质版: undefined,
-  电子版缺码: undefined,
+  电子版: [],
+  纸质版: [],
   做过: undefined,
 };
 
@@ -179,10 +190,25 @@ export interface PendingConflictsFile {
 
 /* -------------------------------- 视图 -------------------------------- */
 
-export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'trash' | 'editor';
+export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'editor';
 
 export interface ColumnPrefs {
   visible: string[];
+}
+
+/**
+ * v4：同步 / 备份操作日志条目。
+ * 每次同步或备份动作写一条，只保留最近 3 条，存浏览器本地（localStorage）。
+ */
+export interface ActionLogEntry {
+  /** 动作发生时间（ISO 字符串） */
+  时间: string;
+  /** 操作类型：同步写回 / 冲突处理写回 / 从仓库拉取 / 本地备份导出 */
+  类型: string;
+  /** 结果：成功 / 失败 */
+  结果: '成功' | '失败';
+  /** 结果说明（失败原因 / 成功摘要） */
+  说明: string;
 }
 
 export interface UiPrefs {

@@ -1,6 +1,9 @@
 /**
  * 信息汇总工作台 · 多字段筛选面板（PRD 5.4 / AC-10）
  * 多条件 AND 组合；同字段多选为 OR（分类为选项级匹配）；支持一键清空与筛选方案。
+ *
+ * v3：电子版 / 纸质版 由「是 / 否」布尔改为「有 / 没有 / 不确定」三态多选；
+ *     「电子版缺码」筛选组随字段一并移除。
  */
 
 import { useMemo, useState } from 'react';
@@ -152,9 +155,14 @@ export function FilterPanel(props: Props) {
               <div className="iw-filter-block-title">电子版尺码组</div>
               {chips('电子版尺码组', optionsOf(schema, '电子版尺码组'))}
             </div>
-            {boolGroup('拥有电子版', '拥有电子版')}
-            {boolGroup('拥有纸质版', '拥有纸质版')}
-            {boolGroup('电子版缺码', '电子版缺码')}
+            <div>
+              <div className="iw-filter-block-title">电子版</div>
+              {chips('电子版', optionsOf(schema, '电子版').length ? optionsOf(schema, '电子版') : ['有', '没有', '不确定'])}
+            </div>
+            <div>
+              <div className="iw-filter-block-title">纸质版</div>
+              {chips('纸质版', optionsOf(schema, '纸质版').length ? optionsOf(schema, '纸质版') : ['有', '没有', '不确定'])}
+            </div>
             {boolGroup('做过', '做过')}
           </div>
 

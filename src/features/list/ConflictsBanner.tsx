@@ -49,7 +49,7 @@ export function ConflictsBanner({ conflicts, suggestions, resolved, onResolve, o
           </div>
         ))}
         {open.length > 6 ? (
-          <div className="iw-conflict-detail">其余 {open.length - 6} 条可在「回收站 / 待确认」入口中逐条查看。</div>
+          <div className="iw-conflict-detail">其余 {open.length - 6} 条可在「设置 › 数据管理」导出的数据文件里逐条查看。</div>
         ) : null}
         {suggestions.map((s) => (
           <div key={`s-${s.记录ID}`} className="iw-conflict-item">

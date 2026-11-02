@@ -15,7 +15,7 @@ describe('hash 路由解析', () => {
     expect(r.query).toBe('');
   });
 
-  it('解析详情 / 编辑 / 看板 / 设置 / 回收站', () => {
+  it('解析详情 / 编辑 / 看板 / 设置', () => {
     expect(parseHash('#/detail/12').view).toBe('detail');
     expect(parseHash('#/detail/12').id).toBe(12);
     expect(parseHash('#/editor/7').view).toBe('editor');
@@ -24,16 +24,19 @@ describe('hash 路由解析', () => {
     expect(parseHash('#/editor/new').id).toBeNull();
     expect(parseHash('#/dashboard').view).toBe('dashboard');
     expect(parseHash('#/settings').view).toBe('settings');
-    expect(parseHash('#/trash').view).toBe('trash');
   });
 
-  it('解析多选筛选与布尔三态', () => {
-    const r = parseHash('#/list?brand=品牌甲~品牌乙&cat=女装&hasE=1&lack=0');
+  it('v4：回收站路由已移除，#/trash 落到列表视图', () => {
+    expect(parseHash('#/trash').view).toBe('list');
+  });
+
+  it('解析多选筛选与布尔三态（v3：电子版/纸质版为枚举多选）', () => {
+    const r = parseHash('#/list?brand=品牌甲~品牌乙&cat=女装&elec=有~不确定&paper=没有&done=1');
     expect(r.filters.品牌).toEqual(['品牌甲', '品牌乙']);
     expect(r.filters.分类).toEqual(['女装']);
-    expect(r.filters.拥有电子版).toBe(true);
-    expect(r.filters.电子版缺码).toBe(false);
-    expect(r.filters.拥有纸质版).toBeUndefined();
+    expect(r.filters.电子版).toEqual(['有', '不确定']);
+    expect(r.filters.纸质版).toEqual(['没有']);
+    expect(r.filters.做过).toBe(true);
   });
 
   it('解析搜索词、排序与页码', () => {
@@ -61,8 +64,8 @@ describe('hash 路由构造与往返', () => {
       filters: filters({
         品牌: ['品牌甲', '品牌乙'],
         分类: ['女装'],
-        拥有电子版: true,
-        电子版缺码: false,
+        电子版: ['有'],
+        纸质版: ['没有'],
       }),
       query: '羊毛 外套',
       sort: { key: '名称' as const, dir: 'asc' as const },
@@ -72,8 +75,8 @@ describe('hash 路由构造与往返', () => {
     const back = parseHash(hash);
     expect(back.filters.品牌).toEqual(['品牌甲', '品牌乙']);
     expect(back.filters.分类).toEqual(['女装']);
-    expect(back.filters.拥有电子版).toBe(true);
-    expect(back.filters.电子版缺码).toBe(false);
+    expect(back.filters.电子版).toEqual(['有']);
+    expect(back.filters.纸质版).toEqual(['没有']);
     expect(back.query).toBe('羊毛 外套');
     expect(back.sort).toEqual({ key: '名称', dir: 'asc' });
     expect(back.page).toBe(4);

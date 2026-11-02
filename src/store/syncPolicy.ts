@@ -128,7 +128,6 @@ function cloneRecord(r: RecordItem): RecordItem {
     分类: r.分类 ? [...r.分类] : [],
     电子版尺码组: r.电子版尺码组 ? [...r.电子版尺码组] : [],
     纸质版尺码: r.纸质版尺码 ? [...r.纸质版尺码] : [],
-    关联: r.关联 ? [...r.关联] : [],
   } as RecordItem;
 }
 
@@ -220,6 +219,12 @@ function planWithoutBaseline(input: SyncPlanInput): SyncPlan {
       continue;
     }
     if (change && !l && r) {
+      // v4：回收站移除 —— 用户删除即物理删除，本地没有这条记录了。
+      // 有「删除」待同步标记时，说明这是用户显式删掉的 → 尊重删除，不把远端记录复活。
+      if (change.动作 === '删除') {
+        removedByRemote.push(id);
+        continue;
+      }
       conflicts.push({
         记录ID: id, 名称: r.名称, 字段: '（记录删除）',
         基线值: '（存在）', 一侧值: '（本地已删除）', 另一侧值: '（远端已修改）',

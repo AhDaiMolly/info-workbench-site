@@ -6,6 +6,12 @@
  *   · 同字段多值 OR：字段内命中任一选项即返回（分类为「选项级匹配」）
  *   · 搜索范围：名称、品牌、备注（PRD 第 5.5 节）
  *   · 看板：分类按「选项级计数」——多值记录在每个命中的选项各计 1 次
+ *
+ * v3 变更：
+ *   · 「拥有电子版 / 拥有纸质版」布尔 → 「电子版 / 纸质版」枚举三态，索引与筛选口径同步改为字符串匹配
+ *   · 删除「电子版缺码」相关索引与筛选（原统计口径整体移除）
+ *   · 拥有形态看板新增「待确认」桶：电子版/纸质版 任一为「不确定」的记录单独归集，
+ *     不混入「都没有」（否则三态信息被布尔口径吃掉）
  */
 
 import type { Filters, RecordItem, SortSpec } from '../types';
@@ -75,9 +81,8 @@ export function buildIndexes(records: RecordItem[]): Indexes {
     fieldIndex('教程', r.教程 ?? '', r.id);
     fieldIndex('推荐', r.推荐 ?? '', r.id);
     fieldIndex('想做', r.想做 ?? '', r.id);
-    fieldIndex('拥有电子版', r.拥有电子版 ? '是' : '否', r.id);
-    fieldIndex('拥有纸质版', r.拥有纸质版 ? '是' : '否', r.id);
-    fieldIndex('电子版缺码', r.电子版缺码 ? '是' : '否', r.id);
+    fieldIndex('电子版', r.电子版 ?? '', r.id);
+    fieldIndex('纸质版', r.纸质版 ?? '', r.id);
     fieldIndex('做过', r.做过 ? '是' : '否', r.id);
     // 多值字段：选项级索引（命中任一选项即返回）
     for (const c of r.分类 ?? []) fieldIndex('分类', c, r.id);
@@ -104,10 +109,10 @@ export function matchesFilters(r: RecordItem, f: Filters): boolean {
   // 分类：命中任一选项即返回
   if (f.分类.length && !(r.分类 ?? []).some((c) => f.分类.includes(c))) return false;
   if (f.电子版尺码组.length && !(r.电子版尺码组 ?? []).some((s) => f.电子版尺码组.includes(s))) return false;
+  // 枚举多选：命中任一取值即返回
+  if (f.电子版.length && !f.电子版.includes(r.电子版 ?? '')) return false;
+  if (f.纸质版.length && !f.纸质版.includes(r.纸质版 ?? '')) return false;
   // 布尔三态
-  if (f.拥有电子版 !== undefined && r.拥有电子版 !== f.拥有电子版) return false;
-  if (f.拥有纸质版 !== undefined && r.拥有纸质版 !== f.拥有纸质版) return false;
-  if (f.电子版缺码 !== undefined && r.电子版缺码 !== f.电子版缺码) return false;
   if (f.做过 !== undefined && r.做过 !== f.做过) return false;
   return true;
 }
@@ -117,8 +122,8 @@ export function hasActiveFilters(f: Filters): boolean {
   return Boolean(
     f.品牌.length || f.分类.length || f.款式.length || f.季节.length || f.教程.length
     || f.推荐.length || f.想做.length || f.电子版尺码组.length
-    || f.拥有电子版 !== undefined || f.拥有纸质版 !== undefined
-    || f.电子版缺码 !== undefined || f.做过 !== undefined,
+    || f.电子版.length || f.纸质版.length
+    || f.做过 !== undefined,
   );
 }
 
@@ -218,7 +223,6 @@ export function sortRecords(records: RecordItem[], sort: SortSpec): RecordItem[]
 
 export interface Stats {
   total: number;
-  有教程: number;
   做过: number;
   想做: number;
   brand: Array<{ name: string; value: number }>;
@@ -272,11 +276,16 @@ export function computeStats(records: RecordItem[]): Stats {
     .map((name) => ({ name, value: seasonMap.get(name) ?? 0 }));
   const seasonBlank = seasonMap.get('') ?? 0;
 
+  // 拥有形态：三态口径 → 四类确定态 + 一个「待确认」桶
+  const hasE = (r: RecordItem) => (r.电子版 ?? '') === '有';
+  const hasP = (r: RecordItem) => (r.纸质版 ?? '') === '有';
+  const unknown = (r: RecordItem) => (r.电子版 ?? '') === '不确定' || (r.纸质版 ?? '') === '不确定';
   const ownership = [
-    { name: '仅电子版', value: records.filter((r) => r.拥有电子版 && !r.拥有纸质版).length },
-    { name: '两者都有', value: records.filter((r) => r.拥有电子版 && r.拥有纸质版).length },
-    { name: '仅纸质版', value: records.filter((r) => !r.拥有电子版 && r.拥有纸质版).length },
-    { name: '都没有', value: records.filter((r) => !r.拥有电子版 && !r.拥有纸质版).length },
+    { name: '仅电子版', value: records.filter((r) => hasE(r) && !hasP(r) && !unknown(r)).length },
+    { name: '两者都有', value: records.filter((r) => hasE(r) && hasP(r)).length },
+    { name: '仅纸质版', value: records.filter((r) => !hasE(r) && hasP(r) && !unknown(r)).length },
+    { name: '都没有', value: records.filter((r) => !hasE(r) && !hasP(r) && !unknown(r)).length },
+    { name: '待确认', value: records.filter((r) => unknown(r)).length },
   ];
 
   const completionMap = tallyBy(records.map((r) => r.想做 ?? ''));
@@ -286,7 +295,6 @@ export function computeStats(records: RecordItem[]): Stats {
 
   return {
     total: records.length,
-    有教程: records.filter((r) => r.教程 === '有').length,
     做过: records.filter((r) => r.做过).length,
     想做: records.filter((r) => r.想做 === '想做').length,
     brand,

@@ -24,9 +24,11 @@ export interface FieldDiff {
   另一侧值: unknown;
 }
 
+// v3：字段改名（拥有电子版 → 电子版、拥有纸质版 → 纸质版）；
+//     「电子版缺码」「关联」随字段删除一并从比对集合中移除。
 const COMPARE_FIELDS: Array<keyof RecordItem> = [
-  '名称', '品牌', '分类', '款式', '季节', '教程', '拥有电子版', '电子版尺码组',
-  '电子版缺码', '拥有纸质版', '纸质版尺码', '推荐', '做过', '想做', '关联', '备注',
+  '名称', '品牌', '分类', '款式', '季节', '教程', '电子版', '电子版尺码组',
+  '纸质版', '纸质版尺码', '推荐', '做过', '想做', '备注',
 ];
 
 function same(a: unknown, b: unknown): boolean {
@@ -34,11 +36,6 @@ function same(a: unknown, b: unknown): boolean {
     return a.length === b.length && a.every((x, i) => x === b[i]);
   }
   return a === b;
-}
-
-/** 删除状态归一：undefined 与 null 都视为「未删除」 */
-function normDeleted(v: unknown): string {
-  return v === null || v === undefined ? '' : String(v);
 }
 
 /**
@@ -51,12 +48,15 @@ function clone<T>(v: T): T {
   return v;
 }
 
-/** 记录相对基线是否发生过内容变化（含删除状态） */
+/**
+ * 记录相对基线是否发生过内容变化。
+ * v4：回收站移除 —— 不再比对 deletedAt（软删标记已不存在，删除即物理删除）。
+ */
 export function recordChanged(base: RecordItem, other: RecordItem): boolean {
   for (const f of COMPARE_FIELDS) {
     if (!same(base[f], other[f])) return true;
   }
-  return normDeleted(base.deletedAt) !== normDeleted(other.deletedAt);
+  return false;
 }
 
 /** 两条记录内容是否完全一致 */
@@ -180,30 +180,6 @@ export function threeWayMerge(
         }
       }
 
-      // 删除状态单独合并（软删除也是内容变化）
-      const bDel = normDeleted(b.deletedAt);
-      const lDel = normDeleted(l.deletedAt);
-      const rDel = normDeleted(r.deletedAt);
-      if (lDel !== rDel) {
-        const localChanged = lDel !== bDel;
-        const remoteChanged = rDel !== bDel;
-        if (localChanged && !remoteChanged) {
-          out.deletedAt = l.deletedAt;
-          autoMerged += 1;
-        } else if (!localChanged && remoteChanged) {
-          out.deletedAt = r.deletedAt;
-          autoMerged += 1;
-        } else if (localChanged && remoteChanged) {
-          conflicts.push({
-            记录ID: id,
-            名称: l.名称,
-            字段: '（删除状态）',
-            基线值: b.deletedAt ?? null,
-            一侧值: l.deletedAt ?? null,
-            另一侧值: r.deletedAt ?? null,
-          });
-        }
-      }
       merged.push(out);
       continue;
     }
@@ -238,7 +214,7 @@ export function threeWayMerge(
         addedFromRemote.push(id);
         continue;
       }
-      // 基线有、本地没了 → 本地已删除（30 天后彻底移除）
+      // 基线有、本地没了 → 本地已删除（v4：物理删除，无回收站）
       if (!recordChanged(b, r)) {
         // 远端未改动 → 尊重本地删除，不把记录带回来
         continue;

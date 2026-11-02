@@ -19,19 +19,16 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     款式: '',
     季节: '',
     教程: '未知',
-    拥有电子版: false,
+    电子版: '不确定',
     电子版尺码组: [],
-    电子版缺码: false,
-    拥有纸质版: false,
+    纸质版: '不确定',
     纸质版尺码: [],
     推荐: '未评价',
     做过: false,
     想做: '未标记',
-    关联: [],
     备注: '',
     创建时间: '2026-01-01T00:00:00.000Z',
     更新时间: '2026-01-01T00:00:00.000Z',
-    deletedAt: null,
     ...rest,
   } as RecordItem;
 }
@@ -39,12 +36,12 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
 const records: RecordItem[] = [
   makeRecord({
     id: 1, 名称: '条目一', 品牌: '品牌甲', 分类: ['女装'], 款式: '衬衣', 季节: '夏',
-    教程: '有', 拥有电子版: true, 电子版尺码组: ['女士全码'], 推荐: '推荐', 做过: true,
+    教程: '有', 电子版: '有', 纸质版: '没有', 电子版尺码组: ['女士全码'], 推荐: '推荐', 做过: true,
     想做: '想做', 备注: '第一行备注',
   }),
   makeRecord({
-    id: 2, 名称: '条目二', 品牌: '品牌乙', 分类: ['女装', '男装'], 拥有电子版: false,
-    纸质版尺码: ['S', 'M'], 备注: '第二行备注', deletedAt: '2026-05-02T03:04:05.000Z',
+    id: 2, 名称: '条目二', 品牌: '品牌乙', 分类: ['女装', '男装'], 电子版: '没有',
+    纸质版: '有', 纸质版尺码: ['S', 'M'], 备注: '第二行备注'
   }),
 ];
 
@@ -86,28 +83,37 @@ describe('JSON 导出（AC-13）', () => {
 });
 
 describe('导出列与行（AC-14）', () => {
-  it('列顺序跟随 schema，deletedAt 排在最后', () => {
+  it('列顺序跟随 schema，v4 不再有 deletedAt 列', () => {
     const cols = exportColumns(DEFAULT_SCHEMA);
     expect(cols[0]).toBe('id');
     expect(cols[1]).toBe('名称');
-    expect(cols[cols.length - 1]).toBe('deletedAt');
     expect(cols).toContain('品牌');
     expect(cols).toContain('备注');
   });
 
-  it('多值以「、」分隔、布尔转「是/否」', () => {
+  it('v4：回收站移除后导出列不含 deletedAt', () => {
+    const cols = exportColumns(DEFAULT_SCHEMA);
+    expect(cols).not.toContain('deletedAt');
+    expect(cols[cols.length - 1]).toBe('更新时间');
+  });
+
+  it('多值以「、」分隔、拥有形态按枚举原样导出', () => {
     const rows = buildExportRows(records, DEFAULT_SCHEMA);
     expect(rows[0].分类).toBe('女装');
     expect(rows[1].分类).toBe('女装、男装');
-    expect(rows[0].拥有电子版).toBe('是');
-    expect(rows[1].拥有电子版).toBe('否');
+    expect(rows[0].电子版).toBe('有');
+    expect(rows[1].电子版).toBe('没有');
+    expect(rows[1].纸质版).toBe('有');
     expect(rows[1].纸质版尺码).toBe('S、M');
   });
 
-  it('已删除记录在 deletedAt 列标注', () => {
-    const rows = buildExportRows(records, DEFAULT_SCHEMA);
-    expect(rows[0].deletedAt).toBe('');
-    expect(rows[1].deletedAt).toBe('已删除');
+  it('导出列不再包含已删除字段', () => {
+    const cols = exportColumns(DEFAULT_SCHEMA);
+    expect(cols).not.toContain('电子版缺码');
+    expect(cols).not.toContain('关联');
+    expect(cols).not.toContain('拥有电子版');
+    expect(cols).toContain('电子版');
+    expect(cols).toContain('纸质版');
   });
 
   it('行数等于记录数', () => {

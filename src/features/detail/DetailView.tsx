@@ -1,19 +1,16 @@
 /**
  * 信息汇总工作台 · 记录详情（PRD 5.6 / AC-12）
- * 全部 19 个字段分组展示；关联记录可点击跳转；返回时保留筛选与搜索上下文。
+ *
+ * v3（需求 1）：版面改为五分区，与新增/编辑表单共用同一套分区契约（src/sections.ts）：
+ *   基础信息 / 拥有形态 / 状态及评价 / 备注 / 系统信息
+ * v3（需求 2 / 8）：删除「关联」「电子版缺码」相关展示；系统信息分区只读展示。
  */
 
 import { useApp } from '../../store/store';
 import { navigate } from '../../router';
 import { highlightParts } from '../../store/selectors';
-
-const GROUPS: Array<{ title: string; fields: string[] }> = [
-  { title: '基础信息', fields: ['名称', '品牌', '分类', '款式', '季节'] },
-  { title: '拥有形态', fields: ['教程', '拥有电子版', '电子版尺码组', '电子版缺码', '拥有纸质版', '纸质版尺码'] },
-  { title: '状态评价', fields: ['推荐', '做过', '想做'] },
-  { title: '关联', fields: ['关联'] },
-  { title: '备注', fields: ['备注'] },
-];
+import { buildSectionPlan } from '../../sections';
+import type { FieldDef } from '../../types';
 
 export function DetailView({ id }: { id: number | null }) {
   const app = useApp();
@@ -31,8 +28,6 @@ export function DetailView({ id }: { id: number | null }) {
     );
   }
 
-  const byId = new Map(app.records.map((r) => [r.id, r]));
-
   const renderValue = (key: string): JSX.Element => {
     const raw = (record as unknown as Record<string, unknown>)[key];
     if (key === '备注') {
@@ -46,35 +41,28 @@ export function DetailView({ id }: { id: number | null }) {
         </span>
       );
     }
-    if (key === '关联') {
-      const refs = Array.isArray(raw) ? raw : [];
-      if (!refs.length) return <span className="iw-cell-muted">（无）</span>;
-      return (
-        <span>
-          {refs.map((ref, i) => {
-            const refId = Number(ref);
-            const target = byId.get(refId);
-            return (
-              <span key={i}>
-                {i > 0 ? '、' : ''}
-                <a
-                  href={`#/detail/${refId}`}
-                  onClick={(e) => { e.preventDefault(); navigate({ view: 'detail', id: refId, filters, query, sort }); }}
-                >
-                  {target ? `#${refId} ${target.名称}` : `#${refId}（已删除记录）`}
-                </a>
-              </span>
-            );
-          })}
-        </span>
-      );
-    }
     if (Array.isArray(raw)) {
       return raw.length ? <span>{raw.join('、')}</span> : <span className="iw-cell-muted">（空）</span>;
     }
     if (typeof raw === 'boolean') return <span>{raw ? '是' : '否'}</span>;
     if (raw === '' || raw === undefined || raw === null) return <span className="iw-cell-muted">（空）</span>;
     return <span>{String(raw)}</span>;
+  };
+
+  // v3：五分区由 schema 驱动（远端新增字段也能落到正确分区）
+  const plan = buildSectionPlan(app.schema);
+
+  const renderField = (field: FieldDef) => {
+    const raw = (record as unknown as Record<string, unknown>)[field.jsonKey];
+    const value = field.type === 'datetime'
+      ? <span>{formatTime(String(raw ?? ''))}</span>
+      : renderValue(field.jsonKey);
+    return (
+      <div className="iw-kv" key={field.key}>
+        <span className="iw-kv-key">{field.label}</span>
+        <span className="iw-kv-val">{value}</span>
+      </div>
+    );
   };
 
   return (
@@ -84,7 +72,6 @@ export function DetailView({ id }: { id: number | null }) {
           <h1 className="iw-page-title">{record.名称 || `记录 #${record.id}`}</h1>
           <p className="iw-page-sub">
             记录 #{record.id}
-            {record.deletedAt ? ' · 已在回收站中' : ''}
           </p>
         </div>
         <div className="iw-actions-row">
@@ -106,72 +93,32 @@ export function DetailView({ id }: { id: number | null }) {
       </div>
 
       <div className="iw-settings-card" style={{ maxWidth: 'none' }}>
-        <div className="iw-detail-group">
-          <div className="iw-detail-group-title">基础信息</div>
-          <div className="iw-detail-grid">
-            {GROUPS[0].fields.map((f) => (
-              <div className="iw-kv" key={f}>
-                <span className="iw-kv-key">{f}</span>
-                <span className="iw-kv-val">{renderValue(f)}</span>
+        {plan.map((section) => (
+          <div
+            className="iw-detail-group"
+            key={section.title}
+            style={section.title === '系统信息' ? { marginBottom: 0 } : undefined}
+          >
+            <div className="iw-detail-group-title">{section.title}</div>
+            {section.fields.length ? (
+              <div className="iw-detail-grid">
+                {section.fields.map((f) => renderField(f))}
               </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="iw-detail-group">
-          <div className="iw-detail-group-title">拥有形态</div>
-          <div className="iw-detail-grid">
-            {GROUPS[1].fields.map((f) => (
-              <div className="iw-kv" key={f}>
-                <span className="iw-kv-key">{f}</span>
-                <span className="iw-kv-val">{renderValue(f)}</span>
+            ) : (
+              <div className="iw-cell-muted">（本分区暂无字段）</div>
+            )}
+            {section.title === '系统信息' ? (
+              <div className="iw-detail-grid" style={{ marginTop: 8 }}>
+                <div className="iw-kv">
+                  <span className="iw-kv-key">同步状态</span>
+                  <span className="iw-kv-val">
+                    {app.pending.some((p) => p.记录ID === record.id) ? '未同步' : '已同步'}
+                  </span>
+                </div>
               </div>
-            ))}
+            ) : null}
           </div>
-        </div>
-
-        <div className="iw-detail-group">
-          <div className="iw-detail-group-title">状态评价</div>
-          <div className="iw-detail-grid">
-            {GROUPS[2].fields.map((f) => (
-              <div className="iw-kv" key={f}>
-                <span className="iw-kv-key">{f}</span>
-                <span className="iw-kv-val">{renderValue(f)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="iw-detail-group">
-          <div className="iw-detail-group-title">关联</div>
-          <div className="iw-kv">
-            <span className="iw-kv-key">关联</span>
-            <span className="iw-kv-val">{renderValue('关联')}</span>
-          </div>
-        </div>
-
-        <div className="iw-detail-group">
-          <div className="iw-detail-group-title">备注</div>
-          <div className="iw-kv">
-            <span className="iw-kv-key">备注</span>
-            <span className="iw-kv-val">{renderValue('备注')}</span>
-          </div>
-        </div>
-
-        <div className="iw-detail-group" style={{ marginBottom: 0 }}>
-          <div className="iw-detail-group-title">系统信息</div>
-          <div className="iw-detail-grid">
-            <div className="iw-kv"><span className="iw-kv-key">记录ID</span><span className="iw-kv-val">{record.id}</span></div>
-            <div className="iw-kv"><span className="iw-kv-key">创建时间</span><span className="iw-kv-val">{formatTime(record.创建时间)}</span></div>
-            <div className="iw-kv"><span className="iw-kv-key">更新时间</span><span className="iw-kv-val">{formatTime(record.更新时间)}</span></div>
-            <div className="iw-kv">
-              <span className="iw-kv-key">同步状态</span>
-              <span className="iw-kv-val">
-                {app.pending.some((p) => p.记录ID === record.id) ? '未同步' : '已同步'}
-              </span>
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
     </>
   );
