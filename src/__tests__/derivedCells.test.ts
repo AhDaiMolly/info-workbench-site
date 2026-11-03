@@ -4,7 +4,7 @@
  * 覆盖：
  *   · 形态列（拥有形态 → 图标）
  *   · 教程列（有 / 无 / 未知）
- *   · 标记列（想做 / 做过 / 推荐 的图标组合与负向标记）
+ *   · 标记列（计划 / 做过 / 推荐 的图标组合与负向标记）
  *   · 分类列截断（最多 2 个 + 「+n」）
  */
 
@@ -53,35 +53,35 @@ describe('v5 · R1 教程列', () => {
   });
 });
 
-describe('v5 · R2 标记列（想做 / 做过 / 推荐 的图标组合）', () => {
-  it('想做 = 想做 → ⭐；做过 = 是 → ✓；推荐 = 推荐 → 👍', () => {
-    const icons = markIcons({ 想做: '想做', 做过: true, 推荐: '推荐' });
+describe('v6.1 · R2 标记列（计划 / 做过 / 推荐 的图标组合）', () => {
+  it('计划 = 在计划中 → ⭐；做过 = 是 → ✓；推荐 = 推荐 → 👍', () => {
+    const icons = markIcons({ 计划: '在计划中', 做过: true, 推荐: '推荐' });
     expect(icons.map((i) => i.char)).toEqual(['⭐', '✓', '👍']);
     expect(icons.every((i) => i.tone === 'positive')).toBe(true);
-    expect(icons.map((i) => i.field)).toEqual(['想做', '做过', '推荐']);
+    expect(icons.map((i) => i.field)).toEqual(['计划', '做过', '推荐']);
   });
 
   it('不想做 / 不推荐 → 负向 ✕', () => {
-    const icons = markIcons({ 想做: '不想做', 做过: false, 推荐: '不推荐' });
+    const icons = markIcons({ 计划: '不想做', 做过: false, 推荐: '不推荐' });
     expect(icons.map((i) => i.char)).toEqual(['✕', '✕']);
     expect(icons.every((i) => i.tone === 'negative')).toBe(true);
   });
 
-  it('不确定 / 未标记 / 未评价 → 不产生图标', () => {
-    expect(markIcons({ 想做: '不确定', 做过: false, 推荐: '未评价' })).toEqual([]);
-    expect(markIcons({ 想做: '未标记' })).toEqual([]);
+  it('不是现在 / 未标记 / 未评价 → 不产生图标', () => {
+    expect(markIcons({ 计划: '不是现在', 做过: false, 推荐: '未评价' })).toEqual([]);
+    expect(markIcons({ 计划: '未标记' })).toEqual([]);
     expect(markIcons({})).toEqual([]);
   });
 
   it('混合态：正向与负向可同时出现', () => {
-    const icons = markIcons({ 想做: '想做', 做过: false, 推荐: '不推荐' });
+    const icons = markIcons({ 计划: '在计划中', 做过: false, 推荐: '不推荐' });
     expect(icons.map((i) => i.char)).toEqual(['⭐', '✕']);
     expect(icons[0].tone).toBe('positive');
     expect(icons[1].tone).toBe('negative');
   });
 
-  it('字段模型不变：标记列只读，不改写 做过 / 想做 / 推荐 的原始值', () => {
-    const r = { 想做: '想做', 做过: true, 推荐: '推荐' };
+  it('字段模型不变：标记列只读，不改写 做过 / 计划 / 推荐 的原始值', () => {
+    const r = { 计划: '在计划中', 做过: true, 推荐: '推荐' };
     const before = JSON.stringify(r);
     markIcons(r);
     expect(JSON.stringify(r)).toBe(before);

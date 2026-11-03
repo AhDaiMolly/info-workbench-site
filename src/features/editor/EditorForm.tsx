@@ -142,7 +142,7 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
             </>
           );
         }
-        // v3：枚举一律下拉单选（季节 / 电子版 / 纸质版 / 教程 / 推荐 / 想做）
+        // v3：枚举一律下拉单选（季节 / 拥有形态 / 教程 / 推荐 / 计划）
         return (
           <select
             className="iw-select"
@@ -191,8 +191,9 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
       case 'tags': {
         const list = (value as string[]) ?? [];
         // v5（R4）：纸质版尺码的录入快捷标签 —— 字母码 XS–4XL / 身高码 100–180（步长 10）
-        // 点选即填（再点一次取消），仍可自由补充；历史 40 条记录原样保留，不做迁移。
-        const quickGroups = f.key === '纸质版尺码'
+        // v6.1（需求 3）：电子版尺码由尺码组单选改为标签双轨，与纸质版共用同一套快捷标签交互。
+        // 点选即填（再点一次取消），仍可自由补充；已迁移/已录入的历史标签原样保留。
+        const quickGroups = ['纸质版尺码', '电子版尺码'].includes(f.key)
           ? [
             { label: '字母码', tags: PAPER_SIZE_LETTER_TAGS },
             { label: '身高码', tags: PAPER_SIZE_HEIGHT_TAGS },
@@ -347,12 +348,12 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
                 {section.fields
                   .filter((f) => !f.system && !f.readonly)
                   .map((f) => {
-                    // v6（需求 3）：形态-尺码联动 —— 勾选「电子版」才展示电子版尺码组，
+                    // v6（需求 3）：形态-尺码联动 —— 勾选「电子版」才展示电子版尺码，
                     // 勾选「纸质版」才展示纸质版尺码；都不选则都不展示。
                     // 取消勾选时已填的尺码「保留数据、仅隐藏输入」，并在原位给出提示（保存不会清除）。
                     const ownership = (values.拥有形态 as string[] | undefined) ?? [];
                     let linkedFormat: string | null = null;
-                    if (f.jsonKey === '电子版尺码组') linkedFormat = '电子版';
+                    if (f.jsonKey === '电子版尺码') linkedFormat = '电子版';
                     if (f.jsonKey === '纸质版尺码') linkedFormat = '纸质版';
                     if (linkedFormat && !ownership.includes(linkedFormat)) {
                       const v = values[f.jsonKey];

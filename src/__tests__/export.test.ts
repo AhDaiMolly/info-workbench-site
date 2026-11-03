@@ -20,11 +20,11 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     季节: '',
     教程: '未知',
     拥有形态: [],
-    电子版尺码组: [],
+    电子版尺码: [],
     纸质版尺码: [],
     推荐: '未评价',
     做过: false,
-    想做: '未标记',
+    计划: '未标记',
     备注: '',
     创建时间: '2026-01-01T00:00:00.000Z',
     更新时间: '2026-01-01T00:00:00.000Z',
@@ -35,8 +35,8 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
 const records: RecordItem[] = [
   makeRecord({
     id: 1, 名称: '条目一', 品牌: '品牌甲', 分类: ['女装'], 款式: '衬衣', 季节: '夏',
-    教程: '有', 拥有形态: ['电子版'], 电子版尺码组: ['女士全码'], 推荐: '推荐', 做过: true,
-    想做: '想做', 备注: '第一行备注',
+    教程: '有', 拥有形态: ['电子版'], 电子版尺码: ['XS', 'M'], 推荐: '推荐', 做过: true,
+    计划: '在计划中', 备注: '第一行备注',
   }),
   makeRecord({
     id: 2, 名称: '条目二', 品牌: '品牌乙', 分类: ['女装', '男装'], 拥有形态: ['电子版', '纸质版'],
@@ -197,5 +197,21 @@ describe('Excel 导出', () => {
     expect(rows.find((r) => r['项目'] === '其他')?.['数量']).toBe('2');
     expect(rows.find((r) => r['项目'] === '未分类')?.['数量']).toBe('1');
     expect(rows.find((r) => r['项目'] === '未填')?.['数量']).toBe('1');
+  });
+});
+
+describe('v6.1 · 导出列与新字段名', () => {
+  it('导出列含「计划」与「电子版尺码」，不再含旧名', () => {
+    const cols = exportColumns(DEFAULT_SCHEMA);
+    expect(cols).toContain('计划');
+    expect(cols).toContain('电子版尺码');
+    expect(cols).not.toContain('想做');
+    expect(cols).not.toContain('电子版尺码组');
+  });
+
+  it('电子版尺码多标签以「、」分隔，与纸质版同格式', () => {
+    const rows = buildExportRows(records, DEFAULT_SCHEMA);
+    expect(rows[0].电子版尺码).toBe('XS、M');
+    expect(rows[0].计划).toBe('在计划中');
   });
 });

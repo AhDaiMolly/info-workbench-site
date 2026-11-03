@@ -22,12 +22,14 @@ export interface Route {
 }
 
 const MULTI_KEYS: Array<keyof Filters> = [
-  '品牌', '分类', '款式', '季节', '教程', '推荐', '想做', '电子版尺码组',
+  '品牌', '分类', '款式', '季节', '教程', '推荐', '计划', '电子版尺码',
   // v5（R5）：电子版 / 纸质版 两个下拉合并为一个多选（电子版 / 纸质版 / 任意拥有）
   '拥有形态',
 ];
 const BOOL_KEYS: Array<keyof Filters> = ['做过'];
 
+// v6.1（需求 2 / 3）：字段键名改为「计划 / 电子版尺码」，URL 参数名保持 plan / size 不变
+// —— 用户收藏的旧链接、旧筛选方案不因键名改名而失效。
 const FILTER_PARAM: Record<string, string> = {
   品牌: 'brand',
   分类: 'cat',
@@ -35,16 +37,16 @@ const FILTER_PARAM: Record<string, string> = {
   季节: 'season',
   教程: 'tut',
   推荐: 'rec',
-  想做: 'plan',
-  电子版尺码组: 'size',
+  计划: 'plan',
+  电子版尺码: 'size',
   拥有形态: 'own',
   做过: 'done',
 };
 
 function parseFilters(params: URLSearchParams): Filters {
   const filters: Filters = {
-    ...EMPTY_FILTERS, 品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 想做: [],
-    电子版尺码组: [], 拥有形态: [],
+    ...EMPTY_FILTERS, 品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 计划: [],
+    电子版尺码: [], 拥有形态: [],
   };
   for (const key of MULTI_KEYS) {
     const raw = params.get(FILTER_PARAM[key]);

@@ -4,7 +4,7 @@
  * v5 列表页默认 8 列里有三列是「派生列」——它们不是数据字段，而是由已有字段渲染出来的：
  *   · 形态 ← 拥有形态（💾 电子版 / 📄 纸质版）
  *   · 教程 ← 教程（有 = ▶ / 无 = ∅ / 未知 = 灰○）
- *   · 标记 ← 想做 / 做过 / 推荐（⭐ / ✓ / 👍，负向 = 灰✕）
+ *   · 标记 ← 计划 / 做过 / 推荐（⭐ / ✓ / 👍，负向 = 灰✕）
  *
  * 展示口径来自设计文档第 6 节。把它们抽成纯函数，
  * 单测不必起浏览器就能覆盖渲染口径（真机冒烟再兜一层）。
@@ -55,15 +55,15 @@ export function tutorialIsKnown(value: unknown): boolean {
 }
 
 /**
- * 标记列：想做 / 做过 / 推荐 的图标组合。
+ * 标记列：计划 / 做过 / 推荐 的图标组合。
  *
- * 口径：想做=想做 → ⭐；做过=是 → ✓；推荐=推荐 → 👍；
- *       想做=不想做 / 推荐=不推荐 → 灰✕；其余（不确定 / 未标记 / 未评价）不产生图标。
+ * 口径：计划=在计划中 → ⭐；做过=是 → ✓；推荐=推荐 → 👍；
+ *       计划=不想做 / 推荐=不推荐 → 灰✕；其余（不是现在 / 未标记 / 未评价）不产生图标。
  */
-export function markIcons(r: { 想做?: string; 做过?: boolean; 推荐?: string }): MarkIcon[] {
+export function markIcons(r: { 计划?: string; 做过?: boolean; 推荐?: string }): MarkIcon[] {
   const out: MarkIcon[] = [];
-  if (r.想做 === '想做') out.push({ char: '⭐', tone: 'positive', field: '想做' });
-  else if (r.想做 === '不想做') out.push({ char: '✕', tone: 'negative', field: '想做' });
+  if (r.计划 === '在计划中') out.push({ char: '⭐', tone: 'positive', field: '计划' });
+  else if (r.计划 === '不想做') out.push({ char: '✕', tone: 'negative', field: '计划' });
   if (r.做过) out.push({ char: '✓', tone: 'positive', field: '做过' });
   if (r.推荐 === '推荐') out.push({ char: '👍', tone: 'positive', field: '推荐' });
   else if (r.推荐 === '不推荐') out.push({ char: '✕', tone: 'negative', field: '推荐' });

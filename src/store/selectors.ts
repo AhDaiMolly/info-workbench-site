@@ -20,7 +20,9 @@
  */
 
 import type { Filters, RecordItem, SortSpec } from '../types';
-import { CATEGORY_ORDER, OWNERSHIP_ANY, SIZE_GROUP_ORDER } from '../schema';
+import {
+  CATEGORY_ORDER, OWNERSHIP_ANY, SIZE_GROUP_ORDER, LEGACY_ESIZE_GROUP_MAP,
+} from '../schema';
 
 /* ------------------------------- 全文索引 ------------------------------- */
 
@@ -87,11 +89,13 @@ export function buildIndexes(records: RecordItem[]): Indexes {
     fieldIndex('季节', r.季节 ?? '', r.id);
     fieldIndex('教程', r.教程 ?? '', r.id);
     fieldIndex('推荐', r.推荐 ?? '', r.id);
-    fieldIndex('想做', r.想做 ?? '', r.id);
+    // v6.1（需求 2）：「想做」改名「计划」
+    fieldIndex('计划', r.计划 ?? '', r.id);
     fieldIndex('做过', r.做过 ? '是' : '否', r.id);
     // 多值字段：选项级索引（命中任一选项即返回）
     for (const c of r.分类 ?? []) fieldIndex('分类', c, r.id);
-    for (const s of r.电子版尺码组 ?? []) fieldIndex('电子版尺码组', s, r.id);
+    // v6.1（需求 3）：「电子版尺码」改为标签双轨，按标签级索引
+    for (const s of r.电子版尺码 ?? []) fieldIndex('电子版尺码', s, r.id);
     // v5（R5）：「拥有形态」多选，按选项级索引
     for (const o of r.拥有形态 ?? []) fieldIndex('拥有形态', o, r.id);
 
@@ -105,6 +109,28 @@ export function buildIndexes(records: RecordItem[]): Indexes {
 
 /* -------------------------------- 筛选 -------------------------------- */
 
+/**
+ * v6.1（需求 3）：把筛选里的旧「电子版尺码组」取值展开为标签双轨的匹配要求。
+ *
+ * 旧筛选方案 / 旧 URL 里可能还存着「女士全码」「大小童全码」这类旧取值。
+ * 展开规则与迁移映射一致：
+ *   女士全码 → 要求记录的电子版尺码包含全部字母码（迁移后正好是全码）
+ *   大小童全码 → 要求包含全部身高码
+ *   男士全码 / 仅小童 → 迁移后无对应标签（原值被置空），恒不命中
+ * 直接是标签值（XS / 100 等）的按普通标签匹配。
+ */
+const LEGACY_ESIZE_NEVER = '__legacy-esize-never__';
+
+export function expandEsizeFilterValues(values: string[]): string[] {
+  const out: string[] = [];
+  for (const v of values) {
+    if (v in LEGACY_ESIZE_GROUP_MAP) out.push(...LEGACY_ESIZE_GROUP_MAP[v]);
+    else if (v === '男士全码' || v === '仅小童') out.push(LEGACY_ESIZE_NEVER);
+    else out.push(v);
+  }
+  return [...new Set(out)];
+}
+
 /** 判断单条记录是否命中全部筛选条件 */
 export function matchesFilters(r: RecordItem, f: Filters): boolean {
   if (f.品牌.length && !f.品牌.includes(r.品牌 ?? '')) return false;
@@ -112,10 +138,15 @@ export function matchesFilters(r: RecordItem, f: Filters): boolean {
   if (f.季节.length && !f.季节.includes(r.季节 ?? '')) return false;
   if (f.教程.length && !f.教程.includes(r.教程 ?? '')) return false;
   if (f.推荐.length && !f.推荐.includes(r.推荐 ?? '')) return false;
-  if (f.想做.length && !f.想做.includes(r.想做 ?? '')) return false;
+  if (f.计划.length && !f.计划.includes(r.计划 ?? '')) return false;
   // 分类：命中任一选项即返回
   if (f.分类.length && !(r.分类 ?? []).some((c) => f.分类.includes(c))) return false;
-  if (f.电子版尺码组.length && !(r.电子版尺码组 ?? []).some((s) => f.电子版尺码组.includes(s))) return false;
+  // v6.1（需求 3）：电子版尺码按标签匹配；旧「尺码组」取值展开为全码要求
+  if (f.电子版尺码.length) {
+    const esize = r.电子版尺码 ?? [];
+    const required = expandEsizeFilterValues(f.电子版尺码);
+    if (!required.every((t) => esize.includes(t))) return false;
+  }
   // v5（R5）：「拥有形态」多选 —— 「包含」语义
   //   · 选中「电子版」/「纸质版」：该形态必须拥有（多项同时选中 = 都要有，即「双有」）
   //   · 选中「任意拥有」：拥有形态非空
@@ -135,7 +166,7 @@ export function matchesFilters(r: RecordItem, f: Filters): boolean {
 export function hasActiveFilters(f: Filters): boolean {
   return Boolean(
     f.品牌.length || f.分类.length || f.款式.length || f.季节.length || f.教程.length
-    || f.推荐.length || f.想做.length || f.电子版尺码组.length
+    || f.推荐.length || f.计划.length || f.电子版尺码.length
     || f.拥有形态.length
     || f.做过 !== undefined,
   );
@@ -241,7 +272,8 @@ export function sortRecords(records: RecordItem[], sort: SortSpec): RecordItem[]
 export interface Stats {
   total: number;
   做过: number;
-  想做: number;
+  /** v6.1（需求 2）：原「想做」KPI 改为「计划」（取值 = 在计划中 的记录数） */
+  计划: number;
   brand: Array<{ name: string; value: number }>;
   brandOther: number;
   category: Array<{ name: string; value: number }>;
@@ -303,15 +335,15 @@ export function computeStats(records: RecordItem[]): Stats {
     { name: '双有', value: records.filter((r) => ownsE(r) && ownsP(r)).length },
   ];
 
-  const completionMap = tallyBy(records.map((r) => r.想做 ?? ''));
-  const completion = ['想做', '不确定', '不想做', '未标记']
+  const completionMap = tallyBy(records.map((r) => r.计划 ?? ''));
+  const completion = ['在计划中', '不是现在', '不想做', '未标记']
     .filter((k) => completionMap.has(k))
     .map((name) => ({ name, value: completionMap.get(name) ?? 0 }));
 
   return {
     total: records.length,
     做过: records.filter((r) => r.做过).length,
-    想做: records.filter((r) => r.想做 === '想做').length,
+    计划: records.filter((r) => r.计划 === '在计划中').length,
     brand,
     brandOther,
     category,

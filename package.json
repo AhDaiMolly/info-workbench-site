@@ -1,7 +1,7 @@
 {
   "name": "info-workbench-site",
   "private": true,
-  "version": "6.0.0",
+  "version": "6.1.0",
   "description": "信息汇总工作台 · 公开站点仓（零数据）",
   "type": "module",
   "scripts": {

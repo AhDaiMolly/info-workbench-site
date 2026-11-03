@@ -22,8 +22,8 @@ function remoteField(over: Partial<FieldDef> & { key: string }): FieldDef {
 }
 
 describe('内置 schema', () => {
-  it('当前结构版本为 4（v5：拥有形态合并）', () => {
-    expect(DEFAULT_SCHEMA.schemaVersion).toBe(4);
+  it('当前结构版本为 5（v6.1：想做改名计划 + 电子版尺码双轨化）', () => {
+    expect(DEFAULT_SCHEMA.schemaVersion).toBe(5);
   });
 
   it('不含已删除字段', () => {
@@ -89,12 +89,12 @@ describe('v5 · R1 列表默认列', () => {
   });
 
   it('R3：尺码与备注收进详情页，不在默认列里', () => {
-    expect(DEFAULT_VISIBLE_COLUMNS).not.toContain('电子版尺码组');
+    expect(DEFAULT_VISIBLE_COLUMNS).not.toContain('电子版尺码');
     expect(DEFAULT_VISIBLE_COLUMNS).not.toContain('纸质版尺码');
     expect(DEFAULT_VISIBLE_COLUMNS).not.toContain('备注');
     // 但字段仍在 schema 中（详情页 / 筛选 / 导出仍然可用）
     const keys = DEFAULT_SCHEMA.fields.map((f) => f.key);
-    expect(keys).toContain('电子版尺码组');
+    expect(keys).toContain('电子版尺码');
     expect(keys).toContain('纸质版尺码');
     expect(keys).toContain('备注');
   });
@@ -119,7 +119,8 @@ describe('取值默认', () => {
   it('枚举字段取显式默认值（旧的两个单选键不再有默认值）', () => {
     expect(FIELD_DEFAULTS.教程).toBe('未知');
     expect(FIELD_DEFAULTS.推荐).toBe('未评价');
-    expect(FIELD_DEFAULTS.想做).toBe('未标记');
+    // v6.1：「想做」改名「计划」，默认值仍是「未标记」
+    expect(FIELD_DEFAULTS.计划).toBe('未标记');
     expect(FIELD_DEFAULTS.电子版).toBeUndefined();
     expect(FIELD_DEFAULTS.纸质版).toBeUndefined();
   });
@@ -212,7 +213,7 @@ describe('远端 schema 合并', () => {
 
   it('schemaVersion 以当前代码为准（不被远端写低）', () => {
     const remote: Partial<Schema> = { schemaVersion: 1, fields: [remoteField({ key: '名称' })] };
-    expect(mergeSchema(DEFAULT_SCHEMA, remote).schemaVersion).toBe(4);
+    expect(mergeSchema(DEFAULT_SCHEMA, remote).schemaVersion).toBe(5);
   });
 
   it('远端 schemaVersion 更高时也不采纳（避免把版本号写低）', () => {

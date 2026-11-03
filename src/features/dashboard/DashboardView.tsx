@@ -119,7 +119,7 @@ export function DashboardView() {
   }, [stats]);
 
   const completionOption = useMemo<echarts.EChartsCoreOption>(() => {
-    const order = ['想做', '不确定', '不想做', '未标记'];
+    const order = ['在计划中', '不是现在', '不想做', '未标记'];
     const map = new Map(stats.completion.map((c) => [c.name, c.value]));
     const data = order.map((name) => ({ name, value: map.get(name) ?? 0 }));
     return {
@@ -143,7 +143,7 @@ export function DashboardView() {
   const kpis = [
     { label: '总记录', value: stats.total, note: '当前筛选范围内' },
     { label: '做过', value: stats.做过, note: '已实际完成' },
-    { label: '想做', value: stats.想做, note: '计划中' },
+    { label: '计划', value: stats.计划, note: '在计划中' },
   ];
 
   return (
@@ -217,7 +217,7 @@ export function DashboardView() {
           <div className="iw-chart-card-head">
             <div className="iw-chart-title">完成与计划</div>
             <div className="iw-chart-note">
-              想做 / 不确定 / 不想做 / 未标记；其中已「做过」{stats.做过} 条
+              在计划中 / 不是现在 / 不想做 / 未标记；其中已「做过」{stats.做过} 条
             </div>
           </div>
           <Chart option={completionOption} />

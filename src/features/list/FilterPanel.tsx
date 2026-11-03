@@ -14,7 +14,9 @@ import { useMemo, useState } from 'react';
 import type { Filters, Schema } from '../../types';
 import { EMPTY_FILTERS } from '../../types';
 import { hasActiveFilters } from '../../store/selectors';
-import { OWNERSHIP_ANY, OWNERSHIP_FORMAT_OPTIONS } from '../../schema';
+import {
+  OWNERSHIP_ANY, OWNERSHIP_FORMAT_OPTIONS, PAPER_SIZE_LETTER_TAGS, PAPER_SIZE_HEIGHT_TAGS,
+} from '../../schema';
 
 interface Props {
   filters: Filters;
@@ -44,6 +46,14 @@ export function FilterPanel(props: Props) {
     const base = fromSchema.length ? fromSchema : OWNERSHIP_FORMAT_OPTIONS;
     return base.includes(OWNERSHIP_ANY) ? base : [...base, OWNERSHIP_ANY];
   }, [schema]);
+  // v6.1（需求 3）：「电子版尺码」改为标签双轨（tags 无 options），筛选项固定为两组快捷标签；
+  // 旧筛选方案里遗留的旧「尺码组」取值（女士全码 等）也一并展示为可点除的标签
+  const esizeFilterOptions = useMemo(() => {
+    const base = [...PAPER_SIZE_LETTER_TAGS, ...PAPER_SIZE_HEIGHT_TAGS];
+    const extra = (filters.电子版尺码 ?? []).filter((o) => !base.includes(o));
+    return [...base, ...extra];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schema, filters.电子版尺码]);
 
   const activeCount = Object.entries(filters).reduce((acc, [k, v]) => {
     if (Array.isArray(v)) return acc + v.length;
@@ -160,12 +170,12 @@ export function FilterPanel(props: Props) {
               {chips('推荐', optionsOf(schema, '推荐'))}
             </div>
             <div>
-              <div className="iw-filter-block-title">想做</div>
-              {chips('想做', optionsOf(schema, '想做'))}
+              <div className="iw-filter-block-title">计划</div>
+              {chips('计划', optionsOf(schema, '计划'))}
             </div>
             <div>
-              <div className="iw-filter-block-title">电子版尺码组</div>
-              {chips('电子版尺码组', optionsOf(schema, '电子版尺码组'))}
+              <div className="iw-filter-block-title">电子版尺码</div>
+              {chips('电子版尺码', esizeFilterOptions, '电子版尺码')}
             </div>
             <div>
               <div className="iw-filter-block-title">拥有形态</div>

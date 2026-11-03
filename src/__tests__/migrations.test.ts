@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   CURRENT_SCHEMA_VERSION, applyMigrations, findLegacyFieldKeys, findShellRecords, isShellRecord,
-  isValidatableRecord, migrate_1_to_2, migrate_2_to_3, migrate_3_to_4, nextRecordId,
-  normalizeOwnershipFormats, normalizeOwnershipValue, normalizeToCurrent, validateRecords,
+  isValidatableRecord, mapLegacyEsizeValue, migrate_1_to_2, migrate_2_to_3, migrate_3_to_4,
+  migrate_4_to_5, nextRecordId, normalizeOwnershipFormats, normalizeOwnershipValue,
+  normalizePlanValue, normalizeToCurrent, validateRecords,
 } from '../store/migrations';
 import { DEFAULT_SCHEMA } from '../schema';
 import type { RecordItem, Schema } from '../types';
@@ -20,12 +21,12 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     款式: '',
     季节: '',
     教程: '未知',
-    电子版尺码组: [],
+    电子版尺码: [],
     拥有形态: [],
     纸质版尺码: [],
     推荐: '未评价',
     做过: false,
-    想做: '未标记',
+    计划: '未标记',
     备注: '',
     创建时间: '2026-01-01T00:00:00.000Z',
     更新时间: '2026-01-01T00:00:00.000Z',
@@ -221,12 +222,18 @@ describe('旧字段扫描（写回闸门用）', () => {
     const recs = [makeLegacyRecord({ id: 1, 关联: [2] }), makeLegacyRecord({ id: 2, 电子版缺码: true })];
     const keys = findLegacyFieldKeys(recs).sort();
     // 旧键（已改名）与已删除字段都会被报出来 —— 写回闸门据此拦截
-    expect(keys).toEqual(['关联', '拥有电子版', '拥有纸质版', '电子版缺码']);
+    // v6.1：makeLegacyRecord 自带「想做」，改名前旧键同样会被报出来
+    expect(keys).toEqual(['关联', '想做', '拥有电子版', '拥有纸质版', '电子版尺码组', '电子版缺码']);
   });
 
   it('v5：R5 合并前的「电子版 / 纸质版」旧键也会被报出来（数据仓未迁移时拦写回）', () => {
     const recs = [makeV3Record({ id: 1, 电子版: '有', 纸质版: '没有' })];
-    expect(findLegacyFieldKeys(recs).sort()).toEqual(['电子版', '纸质版']);
+    expect(findLegacyFieldKeys(recs).sort()).toEqual(['想做', '电子版', '电子版尺码组', '纸质版']);
+  });
+
+  it('v6.1：改名前的「想做」与「电子版尺码组」旧键会被报出来（拦住未迁移数据写回）', () => {
+    const recs = [{ id: 1, 想做: '想做', 电子版尺码组: ['女士全码'] } as unknown as RecordItem];
+    expect(findLegacyFieldKeys(recs).sort()).toEqual(['想做', '电子版尺码组']);
   });
 
   it('当前结构无旧键', () => {
@@ -499,12 +506,12 @@ describe('v5：R5 归一是双射（两态口径下可逆、零丢失）', () =>
     expect(out[0].拥有形态).toEqual(['电子版']);
   });
 
-  it('applyMigrations：schemaVersion 3 → 4 并标记 changed', () => {
+  it('applyMigrations：schemaVersion 3 一路升到当前版本并标记 changed', () => {
     const res = applyMigrations({
       schemaVersion: 3, dataVersion: 1, updatedAt: '',
       records: [makeV3Record({ id: 1, 电子版: '有', 纸质版: '没有' })],
     }, DEFAULT_SCHEMA);
-    expect(res.schemaVersion).toBe(4);
+    expect(res.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(res.changed).toBe(true);
     expect(res.records[0].拥有形态).toEqual(['电子版']);
   });
@@ -520,7 +527,177 @@ describe('v5：R5 归一是双射（两态口径下可逆、零丢失）', () =>
     expect(keys).toContain('拥有形态');
   });
 
-  it('CURRENT_SCHEMA_VERSION = 4', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(4);
+  it('CURRENT_SCHEMA_VERSION = 5', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(5);
+  });
+});
+
+/* ========================================================================
+ * v6.1：结构版本迁移 schemaVersion 4 → 5（「想做」改名「计划」+ 电子版尺码双轨化）
+ * ======================================================================== */
+
+/** v4 结构的记录（仍是「想做」+「电子版尺码组」旧键） */
+function makeV4Record(over: Record<string, unknown> & { id: number }): RecordItem {
+  const { id, ...rest } = over;
+  return {
+    id,
+    名称: `记录-${id}`,
+    品牌: '品牌甲',
+    分类: [],
+    款式: '',
+    季节: '',
+    教程: '未知',
+    电子版尺码组: [],
+    拥有形态: [],
+    纸质版尺码: [],
+    推荐: '未评价',
+    做过: false,
+    想做: '未标记',
+    备注: '',
+    创建时间: '2026-01-01T00:00:00.000Z',
+    更新时间: '2026-01-01T00:00:00.000Z',
+    ...rest,
+  } as unknown as RecordItem;
+}
+
+describe('v6.1 · 需求 2 「计划」取值归一（normalizePlanValue）', () => {
+  it('改名两项：想做 → 在计划中、不确定 → 不是现在', () => {
+    expect(normalizePlanValue('想做')).toBe('在计划中');
+    expect(normalizePlanValue('不确定')).toBe('不是现在');
+  });
+
+  it('保持不动的两项原样透传', () => {
+    expect(normalizePlanValue('不想做')).toBe('不想做');
+    expect(normalizePlanValue('未标记')).toBe('未标记');
+  });
+
+  it('空值 / 缺省归一为「未标记」', () => {
+    expect(normalizePlanValue('')).toBe('未标记');
+    expect(normalizePlanValue(undefined)).toBe('未标记');
+    expect(normalizePlanValue(null)).toBe('未标记');
+  });
+});
+
+describe('v6.1 · 需求 3 旧尺码组映射（mapLegacyEsizeValue）', () => {
+  it('女士全码 → 字母码全码（XS–4XL，顺序固定）', () => {
+    expect(mapLegacyEsizeValue(['女士全码'])).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+  });
+
+  it('大小童全码 → 身高码全码（100–180 步长 10）', () => {
+    expect(mapLegacyEsizeValue(['大小童全码']))
+      .toEqual(['100', '110', '120', '130', '140', '150', '160', '170', '180']);
+  });
+
+  it('男士全码 / 仅小童 / 未知值不产出任何标签（置空）', () => {
+    expect(mapLegacyEsizeValue(['男士全码'])).toEqual([]);
+    expect(mapLegacyEsizeValue(['仅小童'])).toEqual([]);
+    expect(mapLegacyEsizeValue(['别的值'])).toEqual([]);
+  });
+
+  it('多值分别映射并去重；无映射值的项被丢弃', () => {
+    expect(mapLegacyEsizeValue(['女士全码', '大小童全码']))
+      .toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '100', '110', '120', '130', '140', '150', '160', '170', '180']);
+    // 男士全码不映射 → 该项丢弃，女士全码部分保留
+    expect(mapLegacyEsizeValue(['女士全码', '男士全码'])).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+  });
+
+  it('字符串形态按分隔符拆开后逐项映射（旧缓存兜底）', () => {
+    expect(mapLegacyEsizeValue('女士全码、大小童全码')).toHaveLength(17);
+    expect(mapLegacyEsizeValue('')).toEqual([]);
+    expect(mapLegacyEsizeValue('男士全码')).toEqual([]);
+  });
+});
+
+describe('v6.1 · migrate_4_to_5（页面侧加载兜底）', () => {
+  it('「想做」改名为「计划」并归一取值，删除旧键', () => {
+    const out = migrate_4_to_5([makeV4Record({ id: 1, 想做: '想做' })], DEFAULT_SCHEMA);
+    expect(out[0].计划).toBe('在计划中');
+    expect('想做' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
+    const out2 = migrate_4_to_5([makeV4Record({ id: 2, 想做: '不确定' })], DEFAULT_SCHEMA);
+    expect(out2[0].计划).toBe('不是现在');
+  });
+
+  it('「不想做」「未标记」迁移后取值保持不变', () => {
+    expect(migrate_4_to_5([makeV4Record({ id: 1, 想做: '不想做' })], DEFAULT_SCHEMA)[0].计划).toBe('不想做');
+    expect(migrate_4_to_5([makeV4Record({ id: 2 })], DEFAULT_SCHEMA)[0].计划).toBe('未标记');
+  });
+
+  it('「电子版尺码组」按映射规则转为标签数组，删除旧键', () => {
+    const out = migrate_4_to_5([makeV4Record({ id: 1, 电子版尺码组: ['女士全码'] })], DEFAULT_SCHEMA);
+    expect(out[0].电子版尺码).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+    expect('电子版尺码组' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  it('不可映射取值整体置空（男士全码 / 仅小童）', () => {
+    const out = migrate_4_to_5([makeV4Record({ id: 1, 电子版尺码组: ['男士全码'] })], DEFAULT_SCHEMA);
+    expect(out[0].电子版尺码).toEqual([]);
+  });
+
+  it('新结构已有非空「电子版尺码」时以现值为准（current-wins，幂等）', () => {
+    const rec = {
+      ...makeV4Record({ id: 1, 电子版尺码组: ['女士全码'] }),
+      电子版尺码: ['XS'],
+    } as unknown as RecordItem;
+    delete (rec as unknown as Record<string, unknown>).电子版尺码组;
+    // 已是 v5 结构的记录再跑一次：现值保留，不被旧逻辑改写
+    const out = migrate_4_to_5([rec], DEFAULT_SCHEMA);
+    expect(out[0].电子版尺码).toEqual(['XS']);
+  });
+
+  it('字符串形态的「电子版尺码」（旧缓存脏数据）拆开兜底，不白屏不脏写', () => {
+    const rec = makeRecord({ id: 1 }) as unknown as Record<string, unknown>;
+    rec.电子版尺码 = '女士全码';
+    const out = migrate_4_to_5([rec as unknown as RecordItem], DEFAULT_SCHEMA);
+    expect(out[0].电子版尺码).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+  });
+
+  it('幂等：连续两次执行结果完全一致', () => {
+    const recs = [
+      makeV4Record({ id: 1, 想做: '想做', 电子版尺码组: ['女士全码'] }),
+      makeV4Record({ id: 2, 想做: '不确定', 电子版尺码组: ['男士全码'] }),
+      makeRecord({ id: 3, 计划: '在计划中', 电子版尺码: ['XS'] }),
+    ];
+    const a = migrate_4_to_5(recs, DEFAULT_SCHEMA);
+    const b = migrate_4_to_5(a, DEFAULT_SCHEMA);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it('applyMigrations：schemaVersion 4 → 5 并标记 changed', () => {
+    const res = applyMigrations({
+      schemaVersion: 4, dataVersion: 7, updatedAt: '',
+      records: [makeV4Record({ id: 1, 想做: '想做', 电子版尺码组: ['大小童全码'] })],
+    }, DEFAULT_SCHEMA);
+    expect(res.schemaVersion).toBe(5);
+    expect(res.changed).toBe(true);
+    expect(res.readOnly).toBe(false);
+    expect(res.records[0].计划).toBe('在计划中');
+    expect(res.records[0].电子版尺码).toEqual(['100', '110', '120', '130', '140', '150', '160', '170', '180']);
+  });
+
+  it('回归：从 v2 全链路迁移时「想做」取值不被补默认值盖掉（2→3/3→4 抢填回归）', () => {
+    // 旧链路里 migrate_2_to_3 / migrate_3_to_4 会按 schema 抢先把「计划」补成默认值「未标记」，
+    // migrate_4_to_5 的 current-wins 就把「想做」的真实取值盖掉了 —— 修复后旧键占位时跳过补填
+    const res = applyMigrations({
+      schemaVersion: 2, dataVersion: 1, updatedAt: '',
+      records: [makeV3Record({ id: 1, 想做: '想做', 电子版尺码组: ['女士全码'] })],
+    }, DEFAULT_SCHEMA);
+    expect(res.schemaVersion).toBe(5);
+    expect(res.records[0].计划).toBe('在计划中');
+    expect(res.records[0].电子版尺码).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+    const rec = res.records[0] as unknown as Record<string, unknown>;
+    expect('想做' in rec).toBe(false);
+    expect('电子版尺码组' in rec).toBe(false);
+  });
+
+  it('normalizeToCurrent：自报最新版本但仍是旧结构时就地修正（旧浏览器缓存不白屏）', () => {
+    const out = normalizeToCurrent(
+      [makeV4Record({ id: 1, 想做: '想做', 电子版尺码组: ['女士全码'] })],
+      DEFAULT_SCHEMA,
+    );
+    expect(out[0].计划).toBe('在计划中');
+    expect(out[0].电子版尺码).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+    const rec = out[0] as unknown as Record<string, unknown>;
+    expect('想做' in rec).toBe(false);
+    expect('电子版尺码组' in rec).toBe(false);
   });
 });

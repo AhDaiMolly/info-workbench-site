@@ -28,11 +28,11 @@ const sampleRecord: RecordItem = {
   季节: '春秋',
   教程: '有',
   拥有形态: ['电子版'],
-  电子版尺码组: [],
+  电子版尺码: [],
   纸质版尺码: [],
   推荐: '未评价',
   做过: false,
-  想做: '未标记',
+  计划: '未标记',
   备注: '占位备注',
   创建时间: '2026-01-01T00:00:00.000Z',
   更新时间: '2026-01-02T00:00:00.000Z',
@@ -45,8 +45,8 @@ vi.mock('../store/store', () => ({
     records,
     schema: DEFAULT_SCHEMA,
     filters: {
-      品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 想做: [],
-      电子版尺码组: [], 拥有形态: [], 做过: undefined,
+      品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 计划: [],
+      电子版尺码: [], 拥有形态: [], 做过: undefined,
     },
     query: '',
     sort: { key: '更新时间', dir: 'desc' },
@@ -185,10 +185,19 @@ describe('v5 · R4 纸质版尺码快捷标签', () => {
     fireEvent.click(chip);
   }
 
+  // v6.1（需求 3）：电子版尺码与纸质版尺码共用快捷标签，按 label 锚定具体字段容器再取组
+  function sizeField(container: HTMLElement, label: string) {
+    const field = Array.from(container.querySelectorAll('.iw-field')).find(
+      (el) => (el.querySelector('.iw-label')?.textContent ?? '').startsWith(label),
+    );
+    return field as HTMLElement;
+  }
+
   it('提供字母码与身高码两组快捷标签', () => {
     const { container } = render(<EditorForm recordId={7} />);
     enableOwnership(container, '纸质版');
-    const groups = Array.from(container.querySelectorAll('.iw-quick-tags'));
+    // 记录 7 同时勾着「电子版」，容器级查询会数到 4 组 —— 必须限定在纸质版尺码字段内
+    const groups = Array.from(sizeField(container, '纸质版尺码').querySelectorAll('.iw-quick-tags'));
     expect(groups.length).toBe(2);
     expect(groups[0].querySelector('.iw-quick-tags-label')?.textContent).toBe('字母码');
     expect(groups[1].querySelector('.iw-quick-tags-label')?.textContent).toBe('身高码');
@@ -197,7 +206,7 @@ describe('v5 · R4 纸质版尺码快捷标签', () => {
   it('字母码覆盖 XS–4XL，身高码覆盖 100–180 步长 10', () => {
     const { container } = render(<EditorForm recordId={7} />);
     enableOwnership(container, '纸质版');
-    const groups = Array.from(container.querySelectorAll('.iw-quick-tags'));
+    const groups = Array.from(sizeField(container, '纸质版尺码').querySelectorAll('.iw-quick-tags'));
     const letters = Array.from(groups[0].querySelectorAll('button')).map((b) => b.textContent);
     expect(letters).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
     const heights = Array.from(groups[1].querySelectorAll('button')).map((b) => b.textContent);
@@ -239,9 +248,9 @@ describe('v6 · 需求 3 形态-尺码联动', () => {
     return Array.from(group.querySelectorAll('button'));
   }
 
-  it('只勾选「电子版」时：显示电子版尺码组、隐藏纸质版尺码', () => {
+  it('只勾选「电子版」时：显示电子版尺码、隐藏纸质版尺码', () => {
     const { container } = render(<EditorForm recordId={7} />);
-    expect(container.textContent).toContain('电子版尺码组');
+    expect(container.textContent).toContain('电子版尺码');
     expect(container.textContent).not.toContain('纸质版尺码');
     expect(container.querySelector('input[placeholder="输入纸质版尺码后回车"]')).toBeNull();
   });
@@ -281,14 +290,14 @@ describe('v6 · 需求 3 形态-尺码联动', () => {
 
   it('新建记录时形态全不选：两个尺码输入都不出现', () => {
     const { container } = render(<EditorForm recordId={null} />);
-    expect(container.textContent).not.toContain('电子版尺码组');
+    expect(container.textContent).not.toContain('电子版尺码');
     expect(container.textContent).not.toContain('纸质版尺码');
   });
 
-  it('新建记录勾选「电子版」后：只出现电子版尺码组', () => {
+  it('新建记录勾选「电子版」后：只出现电子版尺码', () => {
     const { container } = render(<EditorForm recordId={null} />);
     fireEvent.click(chips(container)[0]);
-    expect(container.textContent).toContain('电子版尺码组');
+    expect(container.textContent).toContain('电子版尺码');
     expect(container.textContent).not.toContain('纸质版尺码');
   });
 });
@@ -318,5 +327,88 @@ describe('记录详情：五分区版面', () => {
     const { container } = render(<DetailView id={7} />);
     expect(container.textContent).toContain('2026-01-01');
     expect(container.textContent).toContain('2026-01-02');
+  });
+});
+
+/* ------------------------------------------------------------------
+ * v6.1 新增用例：需求 1（表单分区顺序）与需求 2/3（新字段交互）
+ * ------------------------------------------------------------------ */
+describe('v6.1 · 需求 1 「拥有形态」分区字段顺序', () => {
+  it('拥有形态多选在尺码字段之前：拥有形态 → 电子版尺码 → 纸质版尺码', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    // 勾选「纸质版」，让两个尺码输入都展示出来，才能断言完整的字段顺序
+    const group = container.querySelector('[role="group"][aria-label="拥有形态"]')!;
+    const paperChip = Array.from(group.querySelectorAll('button')).find((b) => b.textContent === '纸质版')!;
+    fireEvent.click(paperChip);
+    const section = container.querySelectorAll('.iw-form-section')[1]; // 「拥有形态」分区
+    const labels = Array.from(section.querySelectorAll('.iw-label')).map((el) => el.textContent);
+    expect(labels.indexOf('拥有形态')).toBeGreaterThanOrEqual(0);
+    expect(labels.indexOf('拥有形态')).toBeLessThan(labels.indexOf('电子版尺码'));
+    expect(labels.indexOf('电子版尺码')).toBeLessThan(labels.indexOf('纸质版尺码'));
+  });
+
+  it('「状态及评价」分区顺序：做过 → 推荐 → 计划', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    const section = container.querySelectorAll('.iw-form-section')[2]; // 「状态及评价」分区
+    const text = section.textContent ?? '';
+    expect(text.indexOf('做过')).toBeLessThan(text.indexOf('推荐'));
+    expect(text.indexOf('推荐')).toBeLessThan(text.indexOf('计划'));
+    // 旧选项值已消失（「不想做」是合法新枚举，不能被「想做」子串断言误伤）
+    const selectValues = Array.from(section.querySelectorAll('select option')).map(
+      (o) => (o as HTMLOptionElement).value,
+    );
+    expect(selectValues).not.toContain('想做');
+    expect(selectValues).not.toContain('不确定');
+    expect(selectValues).toContain('不想做');
+  });
+});
+
+describe('v6.1 · 需求 3 电子版尺码快捷标签与联动', () => {
+  it('勾选「电子版」后：电子版尺码提供字母码 / 身高码两组快捷标签', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    const groups = Array.from(container.querySelectorAll('.iw-quick-tags'));
+    expect(groups.length).toBe(2);
+    expect(groups[0].querySelector('.iw-quick-tags-label')?.textContent).toBe('字母码');
+    expect(groups[1].querySelector('.iw-quick-tags-label')?.textContent).toBe('身高码');
+  });
+
+  it('点选电子版快捷标签即填入，保存时写进「电子版尺码」', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    fireEvent.click(screen.getByLabelText('电子版尺码 快捷字母码 M'));
+    expect(screen.getByLabelText('移除标签 M')).toBeTruthy();
+    fireEvent.click(screen.getAllByText('保存')[0]);
+    const payload = updateRecordMock.mock.calls[0][1];
+    expect(payload.电子版尺码).toContain('M');
+  });
+
+  it('取消勾选「电子版」后：输入隐藏但已填的电子版尺码保留并给出提示', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    fireEvent.click(screen.getByLabelText('电子版尺码 快捷身高码 120'));
+    const chips = Array.from(
+      container.querySelector('[role="group"][aria-label="拥有形态"]')!.querySelectorAll('button'),
+    );
+    fireEvent.click(chips[0]); // 取消「电子版」
+    const hint = container.querySelector('[data-testid="iw-kept-电子版尺码"]');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toContain('已保留');
+    // 保存不清空
+    fireEvent.click(screen.getAllByText('保存')[0]);
+    const payload = updateRecordMock.mock.calls[0][1];
+    expect(payload.电子版尺码).toContain('120');
+    expect(payload.拥有形态).toEqual([]);
+  });
+});
+
+describe('v6.1 · 需求 2 「计划」字段表单交互', () => {
+  it('「计划」下拉选项为 在计划中 / 不想做 / 不是现在 / 未标记（旧选项消失）', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    // 直接用 id 定位「计划」下拉（分区里第一个 select 是「推荐」，不能用 section.querySelector('select')）
+    const select = container.querySelector('#fld-计划') as HTMLSelectElement | null;
+    expect(select).not.toBeNull();
+    const options = Array.from(select!.options).map((o) => o.value);
+    // 枚举下拉首位是占位「（未填）」
+    expect(options).toEqual(['', '在计划中', '不想做', '不是现在', '未标记']);
+    expect(options).not.toContain('想做');
+    expect(options).not.toContain('不确定');
   });
 });

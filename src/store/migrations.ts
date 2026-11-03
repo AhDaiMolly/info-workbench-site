@@ -34,6 +34,17 @@
  *   · 旧两键从记录里删除，「拥有形态」缺失时按上面的映射补齐（空数组）
  *   · 页面侧归一是**幂等**的：数据仓尚未迁移时，旧数据也能正常显示（写回由闸门拦住）
  *
+ * v6.1（schemaVersion 4 → 5）：计划字段改名 + 电子版尺码双轨化
+ *   · 「想做」→「计划」，取值改名：想做 → 在计划中；不确定 → 不是现在
+ *     （不想做 / 未标记 保持不变）
+ *   · 「电子版尺码组」（尺码组多选）→「电子版尺码」（标签双轨，与纸质版同格式），
+ *     旧值映射（与数据仓 migrate-v6 同规则）：
+ *       女士全码   → 字母码全码（XS–4XL）
+ *       大小童全码 → 身高码全码（100–180 步长 10）
+ *       男士全码 / 仅小童 / 其他值 → 不映射（置空；混合值时仅丢弃不可映射的那部分）
+ *   · 旧值字符串形态（单字符串、顿号分隔）一并兜底：按分隔符拆开后逐项映射
+ *   · 页面侧归一是**幂等**的：旧版页面缓存的旧数据加载后不白屏、不把旧键写回
+ *
  * ⚠️ v4 修复（同步被阻断的根因，见交付说明 v4「根因」一节）：
  *   写回校验**只针对有效记录**：
  *     · 空壳记录（名称为空）不参与校验 —— 这类记录来自最初的表格导入，
@@ -45,16 +56,33 @@
 import type { FieldDef, RecordItem, RecordsFile, Schema } from '../types';
 import {
   OWNERSHIP_FORMAT_OPTIONS, OWNERSHIP_TRISTATE_OPTIONS, REMOVED_FIELD_KEYS,
-  defaultValueFor, LEGACY_MULTI_VALUES, MERGED_OWNERSHIP_KEYS,
+  defaultValueFor, LEGACY_MULTI_VALUES, MERGED_OWNERSHIP_KEYS, MERGED_V61_KEYS,
+  PLAN_VALUE_RENAME, LEGACY_ESIZE_GROUP_MAP,
 } from '../schema';
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 /** 旧键 → 新键（布尔改枚举） */
 const LEGACY_OWNERSHIP_KEYS: Array<[string, string]> = [
   ['拥有电子版', '电子版'],
   ['拥有纸质版', '纸质版'],
 ];
+
+/**
+ * v6.1 改名对：旧键 → 新键。
+ * migrate_2_to_3 / migrate_3_to_4 按 schema 补默认值时，若改名前的旧键还在，
+ * 必须跳过对应新键 —— 否则新键被抢先填上默认值（计划 = 未标记），
+ * migrate_4_to_5 的 current-wins 就会把旧键里的真实取值盖掉。
+ */
+const RENAMED_KEYS_V61: Array<[string, string]> = [
+  ['想做', '计划'],
+  ['电子版尺码组', '电子版尺码'],
+];
+
+/** 记录上该新键是否被 v6.1 改名前的旧键占位（改名交给 migrate_4_to_5 做） */
+function isPendingV61Rename(out: Record<string, unknown>, newKey: string): boolean {
+  return RENAMED_KEYS_V61.some(([oldKey, nk]) => nk === newKey && oldKey in out);
+}
 
 /**
  * 把「电子版 / 纸质版」的任意取值归一为枚举三态。
@@ -120,6 +148,8 @@ export function migrate_1_to_2(records: RecordItem[], schema: Schema): RecordIte
     // 其余字段按 schema 补默认值（不覆盖已有值）
     for (const f of schema.fields) {
       const key = f.jsonKey;
+      // v6.1：旧键（想做 / 电子版尺码组）还在时别抢填新键默认值，改名交给 migrate_4_to_5
+      if (isPendingV61Rename(out, key)) continue;
       if (!(key in out) || out[key] === undefined || out[key] === null) {
         out[key] = defaultValueFor(f);
       }
@@ -151,6 +181,8 @@ export function migrate_2_to_3(records: RecordItem[], schema: Schema): RecordIte
     delete out.deletedAt;
     for (const f of schema.fields) {
       const key = f.jsonKey;
+      // v6.1：旧键（想做 / 电子版尺码组）还在时别抢填新键默认值，改名交给 migrate_4_to_5
+      if (isPendingV61Rename(out, key)) continue;
       if (!(key in out) || out[key] === undefined || out[key] === null) {
         out[key] = defaultValueFor(f);
       }
@@ -194,6 +226,91 @@ export function migrate_3_to_4(records: RecordItem[], schema: Schema): RecordIte
     // 其余字段按 schema 补默认值（不覆盖已有值）
     for (const f of schema.fields) {
       const key = f.jsonKey;
+      // v6.1：旧键（想做 / 电子版尺码组）还在时别抢填新键默认值，改名交给 migrate_4_to_5
+      if (isPendingV61Rename(out, key)) continue;
+      if (!(key in out) || out[key] === undefined || out[key] === null) {
+        out[key] = defaultValueFor(f);
+      }
+    }
+    return out as unknown as RecordItem;
+  });
+}
+
+/**
+ * v6.1（需求 2）：把旧「想做」取值归一为「计划」取值。
+ *   想做 → 在计划中；不确定 → 不是现在；不想做 / 未标记 及其余取值原样保留。
+ */
+export function normalizePlanValue(value: unknown): string {
+  const s = String(value ?? '').trim();
+  if (s === '') return '未标记';
+  return PLAN_VALUE_RENAME[s] ?? s;
+}
+
+/**
+ * v6.1（需求 3）：把旧「电子版尺码组」的任意形态（数组 / 字符串）映射为标签双轨数组。
+ *
+ * 规则与数据仓 migrate-v6 完全一致：
+ *   女士全码 → 字母码全码；大小童全码 → 身高码全码；
+ *   男士全码 / 仅小童 / 其他值不映射（不产出任何标签）。
+ * 字符串按「、 ， , ； ; 空白」拆开后逐项映射；结果去重。
+ */
+export function mapLegacyEsizeValue(value: unknown): string[] {
+  const raw = Array.isArray(value)
+    ? value.map((v) => String(v).trim())
+    : String(value ?? '').trim().split(/[、,，;；\s]+/);
+  const out = new Set<string>();
+  for (const item of raw) {
+    if (!item) continue;
+    for (const tag of LEGACY_ESIZE_GROUP_MAP[item] ?? []) out.add(tag);
+  }
+  return [...out];
+}
+
+/**
+ * schemaVersion 4 → 5：v6.1「计划」字段改名 +「电子版尺码」双轨化（页面侧加载兜底）。
+ *
+ *   · 旧键「想做」存在 → 改名「计划」并归一取值（想做→在计划中、不确定→不是现在），删除旧键
+ *   · 旧键「电子版尺码组」存在（数组或字符串）→ 按映射规则转为「电子版尺码」标签数组，删除旧键
+ *   · 「电子版尺码」若已是字符串（历史脏缓存）→ 拆开映射为标签数组
+ *   · 其余字段按 schema 补默认值（不覆盖已有值）
+ *
+ * 纯函数；幂等（已迁移的记录再执行一次不产生任何变化）。
+ */
+export function migrate_4_to_5(records: RecordItem[], schema: Schema): RecordItem[] {
+  return records.map((r) => {
+    const rec = r as unknown as Record<string, unknown>;
+    const out = { ...rec } as Record<string, unknown>;
+
+    // 需求 2：「想做」→「计划」
+    if ('想做' in out) {
+      const current = out.计划;
+      out.计划 = current !== undefined && current !== null && String(current).trim() !== ''
+        ? normalizePlanValue(current)
+        : normalizePlanValue(out.想做);
+      delete out.想做;
+    } else if (out.计划 === undefined || out.计划 === null || String(out.计划).trim() === '') {
+      // 新结构但缺失 / 空值 → 补默认（与数据仓迁移后的取值口径一致）
+      out.计划 = '未标记';
+    }
+
+    // 需求 3：「电子版尺码组」→「电子版尺码」标签双轨
+    if ('电子版尺码组' in out) {
+      const mapped = mapLegacyEsizeValue(out.电子版尺码组);
+      const current = out.电子版尺码;
+      out.电子版尺码 = Array.isArray(current) && current.length
+        ? current.map((v) => String(v))
+        : mapped;
+      delete out.电子版尺码组;
+    } else if (typeof out.电子版尺码 === 'string') {
+      // 旧版缓存里可能落过字符串形态 → 拆开兜底（拆不出的值整体置空，与数据仓同规则）
+      out.电子版尺码 = mapLegacyEsizeValue(out.电子版尺码);
+    } else if (!Array.isArray(out.电子版尺码)) {
+      out.电子版尺码 = [];
+    }
+
+    // 其余字段按 schema 补默认值（不覆盖已有值）
+    for (const f of schema.fields) {
+      const key = f.jsonKey;
       if (!(key in out) || out[key] === undefined || out[key] === null) {
         out[key] = defaultValueFor(f);
       }
@@ -211,6 +328,8 @@ export function migrate_3_to_4(records: RecordItem[], schema: Schema): RecordIte
  *
  * v4：顺带清掉软删残留 —— 带 deletedAt 标记的记录直接移除，其余记录删掉该键。
  * v5：顺带把「电子版 / 纸质版」两个旧键归一为「拥有形态」。
+ * v6.1：顺带把「想做 / 电子版尺码组」两个旧键归一为「计划 / 电子版尺码」，
+ *       兜底字符串形态的「电子版尺码」（旧缓存）。
  */
 export function normalizeToCurrent(records: RecordItem[], schema: Schema): RecordItem[] {
   const needsShapeFix = records.some((r) => {
@@ -218,16 +337,20 @@ export function normalizeToCurrent(records: RecordItem[], schema: Schema): Recor
     return LEGACY_OWNERSHIP_KEYS.some(([oldKey]) => oldKey in rec)
       || REMOVED_FIELD_KEYS.some((k) => k in rec)
       || 'deletedAt' in rec
-      || MERGED_OWNERSHIP_KEYS.some((k) => k in rec);
+      || MERGED_OWNERSHIP_KEYS.some((k) => k in rec)
+      || MERGED_V61_KEYS.some((k) => k in rec)
+      || typeof rec.电子版尺码 === 'string';
   });
   if (!needsShapeFix) return records;
-  // ⚠️ 顺序：先做「改名」（1 → 2），再做「软删清理」（2 → 3），最后做「形态合并」（3 → 4）。
+  // ⚠️ 顺序：先做「改名」（1 → 2），再做「软删清理」（2 → 3），再做「形态合并」（3 → 4），
+  // 最后做「v6.1 改名与双轨化」（4 → 5）。
   // 反过来会踩坑 —— 2 → 3 会先给缺失字段补默认值，把布尔旧值盖成「不确定」，
   // 旧数据里的「拥有电子版: true」就再也还原不回「有」了；
-  // 同理 3 → 4 必须排在 1 → 2 之后，否则旧布尔值会被当成「非有」丢掉。
+  // 同理后一步必须排在前一步之后，否则旧布尔值会被当成「非有」丢掉。
   const renamed = migrate_1_to_2(records, schema);
   const cleaned = migrate_2_to_3(renamed, schema);
-  return migrate_3_to_4(cleaned, schema);
+  const merged = migrate_3_to_4(cleaned, schema);
+  return migrate_4_to_5(merged, schema);
 }
 
 const MIGRATIONS: Record<number, (records: RecordItem[], schema: Schema) => RecordItem[]> = {
@@ -235,6 +358,7 @@ const MIGRATIONS: Record<number, (records: RecordItem[], schema: Schema) => Reco
   1: migrate_1_to_2,
   2: migrate_2_to_3,
   3: migrate_3_to_4,
+  4: migrate_4_to_5,
 };
 
 export interface MigrationResult {
@@ -289,6 +413,8 @@ export function findLegacyFieldKeys(records: RecordItem[]): string[] {
     for (const [oldKey] of LEGACY_OWNERSHIP_KEYS) if (oldKey in rec) hits.add(oldKey);
     for (const k of MERGED_OWNERSHIP_KEYS) if (k in rec) hits.add(k);
     for (const k of REMOVED_FIELD_KEYS) if (k in rec) hits.add(k);
+    // v6.1：命中「想做」「电子版尺码组」说明数据仓还没做 v6.1 迁移 —— 写回前会被拦住
+    for (const k of MERGED_V61_KEYS) if (k in rec) hits.add(k);
   }
   return [...hits];
 }

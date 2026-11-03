@@ -5,8 +5,8 @@
  * 因此「品牌」「款式」的选项集在兜底 schema 中为空——它们由数据仓的 schema.json 提供，
  * 只有连接数据仓后才会有真实选项。
  *
- * 这里内置的仅是「产品定义型」选项集（分类 / 季节 / 教程 / 推荐 / 想做 / 电子版尺码组 /
- * 电子版 / 纸质版），这些来自需求定义，与具体数据无关，可以安全地出现在公开站点仓中。
+ * 这里内置的仅是「产品定义型」选项集（分类 / 季节 / 教程 / 推荐 / 计划 /
+ * 拥有形态 / 电子版 / 纸质版），这些来自需求定义，与具体数据无关，可以安全地出现在公开站点仓中。
  *
  * v3 变更摘要：
  *   · 新增「电子版」「纸质版」两个枚举三态字段（有 / 没有 / 不确定），
@@ -26,7 +26,15 @@
  *   · 远端若仍带旧键（电子版 / 纸质版 / 拥有电子版 / 拥有纸质版），一律不采纳，
  *     由内置的 v5 定义接管 —— 页面侧归一后仍可正常显示，写回闸门会拦住未迁移的数据仓
  *   · 列表默认列改为 8 列（R1）：名称 / 品牌 / 分类 / 款式 / 季节 / 形态 / 教程 / 标记
- *     「形态」「标记」是列表页派生列（由「拥有形态」「想做/做过/推荐」渲染），不是数据字段
+ *     「形态」「标记」是列表页派生列（由「拥有形态」「计划/做过/推荐」渲染），不是数据字段
+ *
+ * v6.1 变更摘要（计划字段改名 + 电子版尺码双轨化）：
+ *   · 结构版本 4 → 5：「想做」改名「计划」，取值 想做→在计划中、不确定→不是现在
+ *     （不想做 / 未标记 保持不变）；「电子版尺码组」（尺码组单选）改为「电子版尺码」
+ *     （标签双轨：字母码 XS–4XL + 身高码 100–180，与纸质版尺码同格式）
+ *   · 旧键（想做 / 电子版尺码组）一律不采纳，记录里的旧值由 migrate_4_to_5 归一
+ *   · 字段顺序：「拥有形态」先于两个尺码字段（先勾形态，再录对应尺码）；
+ *     「状态及评价」区顺序 = 做过 → 推荐 → 计划
  */
 
 import type { FieldDef, FieldType, Schema } from './types';
@@ -41,7 +49,7 @@ export const FIELD_TYPES: FieldType[] = [
 /** 分类目标选项集（v3：不含「通用」） */
 export const CATEGORY_ORDER = ['女装', '男装', '童装', '婴童'];
 
-/** 尺码组顺序 */
+/** 旧「尺码组」的固定选项序（v6.1 前）—— v6.1 起「电子版尺码」改为与纸质版一致的标签双轨，此表仅供迁移层兼容旧值 */
 export const SIZE_GROUP_ORDER = ['女士全码', '男士全码', '大小童全码', '仅小童'];
 
 /**
@@ -94,6 +102,18 @@ export const LEGACY_MULTI_VALUES: Record<string, string[]> = {
   分类: ['通用'],
 };
 
+/**
+ * v6.1（需求 2）：「计划」字段的选项集（由「想做」改名而来）。
+ * 改名映射：想做 → 在计划中；不确定 → 不是现在；不想做 / 未标记 保持不变。
+ */
+export const PLAN_OPTIONS = ['在计划中', '不想做', '不是现在', '未标记'];
+
+/** v6.1（需求 2）：「想做 → 计划」改名时的取值映射（仅改这两项，其余原样保留） */
+export const PLAN_VALUE_RENAME: Record<string, string> = {
+  想做: '在计划中',
+  不确定: '不是现在',
+};
+
 export const DEFAULT_FIELDS: FieldDef[] = [
   { key: '记录ID', jsonKey: 'id', type: 'number', label: '记录ID', readonly: true, system: true },
   { key: '名称', jsonKey: '名称', type: 'text', label: '名称', required: true },
@@ -101,18 +121,25 @@ export const DEFAULT_FIELDS: FieldDef[] = [
   { key: '分类', jsonKey: '分类', type: 'multi', label: '分类', options: CATEGORY_ORDER, ordered: true },
   { key: '款式', jsonKey: '款式', type: 'enum', label: '款式', options: [], allowNew: true },
   { key: '季节', jsonKey: '季节', type: 'enum', label: '季节', options: SEASON_OPTIONS },
-  { key: '教程', jsonKey: '教程', type: 'enum', label: '教程', options: ['有', '无', '未知'] },
-  { key: '电子版尺码组', jsonKey: '电子版尺码组', type: 'multi', label: '电子版尺码组', options: SIZE_GROUP_ORDER, ordered: true },
+  // v6.1（需求 1）：「拥有形态」多选排在两个尺码字段之前 —— 先勾形态，再在其下方录入对应尺码
   // v5（R5）：「电子版」+「纸质版」两个枚举单选合并为单个多选字段
   { key: '拥有形态', jsonKey: '拥有形态', type: 'multi', label: '拥有形态', options: OWNERSHIP_FORMAT_OPTIONS, ordered: true },
+  // v6.1（需求 3）：「电子版尺码」由尺码组单选改为与纸质版一致的标签双轨（字母码 + 身高码）
+  { key: '电子版尺码', jsonKey: '电子版尺码', type: 'tags', label: '电子版尺码' },
   { key: '纸质版尺码', jsonKey: '纸质版尺码', type: 'tags', label: '纸质版尺码' },
-  { key: '推荐', jsonKey: '推荐', type: 'enum', label: '推荐', options: ['推荐', '不推荐', '未评价'] },
+  { key: '教程', jsonKey: '教程', type: 'enum', label: '教程', options: ['有', '无', '未知'] },
+  // v6.1（需求 2）：「状态及评价」区顺序 = 是否做过 → 推荐 → 计划
   { key: '做过', jsonKey: '做过', type: 'boolean', label: '做过' },
-  { key: '想做', jsonKey: '想做', type: 'enum', label: '想做', options: ['想做', '不想做', '不确定', '未标记'] },
+  { key: '推荐', jsonKey: '推荐', type: 'enum', label: '推荐', options: ['推荐', '不推荐', '未评价'] },
+  // v6.1（需求 2）：「想做」改名「计划」，选项 想做→在计划中、不确定→不是现在（不想做 / 未标记 保持不变）
+  { key: '计划', jsonKey: '计划', type: 'enum', label: '计划', options: PLAN_OPTIONS },
   { key: '备注', jsonKey: '备注', type: 'text', label: '备注', long: true },
   { key: '创建时间', jsonKey: '创建时间', type: 'datetime', label: '创建时间', readonly: true, system: true },
   { key: '更新时间', jsonKey: '更新时间', type: 'datetime', label: '更新时间', readonly: true, system: true },
 ];
+
+/** v6.1 前旧「电子版尺码组」的完整选项集（供迁移层识别旧值） */
+export const LEGACY_ESIZE_GROUP_OPTIONS = ['女士全码', '男士全码', '大小童全码', '仅小童'];
 
 /**
  * v5：被「拥有形态」合并掉的旧键。
@@ -132,17 +159,36 @@ export const PAPER_SIZE_LETTER_TAGS = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', 
 export const PAPER_SIZE_HEIGHT_TAGS = ['100', '110', '120', '130', '140', '150', '160', '170', '180'];
 
 /**
+ * v6.1（需求 3）：旧「电子版尺码组」取值 → 标签双轨的映射（页面侧加载兜底，与数据仓 migrate-v6 同规则）。
+ *   女士全码 → 字母码全码（XS–4XL）
+ *   大小童全码 → 身高码全码（100–180 步长 10）
+ *   男士全码 / 仅小童 / 其他值 → 不映射（置空）
+ */
+export const LEGACY_ESIZE_GROUP_MAP: Record<string, string[]> = {
+  女士全码: [...PAPER_SIZE_LETTER_TAGS],
+  大小童全码: [...PAPER_SIZE_HEIGHT_TAGS],
+};
+
+/**
  * v5（R1）：列表页的派生列。
  *
  * 这两列不是数据字段，而是由已有字段渲染出来的展示列：
  *   · 「形态」← 拥有形态（💾 电子版 / 📄 纸质版）
- *   · 「标记」← 想做 / 做过 / 推荐（⭐ ✓ 👍，负向为灰✕）
+ *   · 「标记」← 计划 / 做过 / 推荐（⭐ ✓ 👍，负向为灰✕）
  */
 export const DERIVED_LIST_COLUMNS = ['形态', '标记'];
 
-/** 当前代码支持的数据结构版本（v5 = 拥有形态合并） */
+/**
+ * v6.1（需求 2 / 3）：被改名替换掉的旧键。
+ *
+ * 远端 schema 或本地缓存若仍带这些键（旧版页面写入的缓存），一律不采纳
+ * （由内置的 v6.1 定义接管）；记录里的旧键值由迁移层归一（migrate_4_to_5）。
+ */
+export const MERGED_V61_KEYS = ['想做', '电子版尺码组'];
+
+/** 当前代码支持的数据结构版本（v6.1 = 计划字段改名 + 电子版尺码双轨化） */
 export const DEFAULT_SCHEMA: Schema = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   appName: APP_NAME,
   fields: DEFAULT_FIELDS,
   systemFields: ['id', '创建时间', '更新时间'],
@@ -183,6 +229,8 @@ export function mergeSchema(base: Schema, remote: Partial<Schema> | null | undef
     if (rf.key in LEGACY_FIELD_ALIAS) continue;
     // v5（R5）：「电子版」「纸质版」已被合并进「拥有形态」，远端旧键一律不采纳
     if (MERGED_OWNERSHIP_KEYS.includes(rf.key)) continue;
+    // v6.1：「想做」「电子版尺码组」已被改名（计划 / 电子版尺码），旧键一律不采纳
+    if (MERGED_V61_KEYS.includes(rf.key)) continue;
 
     const existing = byKey.get(rf.key);
     if (existing) {
@@ -216,7 +264,7 @@ export function mergeSchema(base: Schema, remote: Partial<Schema> | null | undef
  *
  * 一行回答三个问题：这是什么（名称/品牌/分类/款式/季节）、
  * 我手里有没有（形态）、我的状态与上手难度（教程/标记）。
- * 其余字段（尺码、备注、创建/更新时间、想做/推荐的完整三态值）收进详情页；
+ * 其余字段（尺码、备注、创建/更新时间、计划/推荐的完整三态值）收进详情页；
  * 筛选器保留全部字段。
  */
 export const DEFAULT_VISIBLE_COLUMNS = [
@@ -233,7 +281,7 @@ export const DEFAULT_VISIBLE_COLUMNS = [
 export const FIELD_DEFAULTS: Record<string, string> = {
   教程: '未知',
   推荐: '未评价',
-  想做: '未标记',
+  计划: '未标记',
 };
 
 /**

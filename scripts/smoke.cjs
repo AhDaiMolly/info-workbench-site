@@ -13,7 +13,7 @@
  * 沿用 v3 的覆盖：列表 / 搜索 / 新增编辑表单五分区 / 详情五分区 / 看板渲染 / 导出内容
  *
  * 数据：不用线上数据仓。启动本地静态服务托管 dist/，并拦截 api.github.com 请求，
- *       返回 data/migration-v5/ 下的 v4 数据与结构，保证离线可跑、结果稳定。
+ *       返回 data/migration-v61/ 下的 v5 数据与结构（v6.1 已迁移口径），保证离线可跑、结果稳定。
  *
  * 运行：
  *   node scripts/smoke.cjs
@@ -29,9 +29,9 @@ const PUPPETEER_PATH = process.env.PUPPETEER_PATH || '/home/gem/.aily/.cli/npm/n
 const puppeteer = require(PUPPETEER_PATH);
 
 const DIST = path.resolve(__dirname, '../dist');
-const DATA_DIR = path.resolve(__dirname, '../../data/migration-v5');
-const RECORDS_FILE = 'records.v5.json';
-const SCHEMA_FILE = 'schema.v5.json';
+const DATA_DIR = path.resolve(__dirname, '../../data/migration-v61');
+const RECORDS_FILE = 'records.v61.json';
+const SCHEMA_FILE = 'schema.v61.json';
 const PORT = Number(process.env.SMOKE_PORT || 4178);
 const MOCK_SHA = '0'.repeat(40);
 
@@ -387,7 +387,7 @@ function apiPayload(name, buf) {
         : '当前数据无「名称为空」的空壳记录');
 
     /* ---------------- v6 五项体验优化（浏览器逐项验证） ---------------- */
-    // 本段跑在完整数据集（795 条）已加载的阶段，断言一律锚定当前数据
+    // 本段跑在完整数据集（799 条，v6.1 已迁移口径）已加载的阶段，断言一律锚定当前数据
     await page.evaluate(() => {
       localStorage.removeItem('iw.prefs');
     });
@@ -403,7 +403,7 @@ function apiPayload(name, buf) {
       };
     });
     record('v6-1 设置页展示「版本信息」卡片（版本号/构建日期/提交）',
-      verInfo.hasCard && verInfo.bodyHasFields && verInfo.text.includes('v6.0.0'),
+      verInfo.hasCard && verInfo.bodyHasFields && verInfo.text.includes('v6.1.0'),
       verInfo.hasCard ? `版本文本：${verInfo.text}` : '未找到版本信息卡片');
 
     // 样本：仅勾选「电子版」且有备注的记录（从当前数据里挑）
@@ -439,13 +439,13 @@ function apiPayload(name, buf) {
         const text = document.body.innerText || '';
         return {
           hasPaperInput: !!document.querySelector('input[placeholder="输入纸质版尺码后回车"]'),
-          hasEsize: text.includes('电子版尺码组'),
+          hasEsize: text.includes('电子版尺码'),
           hasPaperLabel: text.includes('纸质版尺码'),
         };
       });
-      record('v6-3a 仅勾选「电子版」时：电子版尺码组显示、纸质版尺码不出现',
+      record('v6-3a 仅勾选「电子版」时：电子版尺码显示、纸质版尺码不出现',
         linkageHidden.hasEsize && !linkageHidden.hasPaperInput && !linkageHidden.hasPaperLabel,
-        `电子版尺码组=${linkageHidden.hasEsize}，纸质版尺码输入=${linkageHidden.hasPaperInput}`);
+        `电子版尺码=${linkageHidden.hasEsize}，纸质版尺码输入=${linkageHidden.hasPaperInput}`);
 
       const clickOwnChip = (label) => page.evaluate((t) => {
         const group = document.querySelector('[role="group"][aria-label="拥有形态"]');
@@ -503,6 +503,103 @@ function apiPayload(name, buf) {
         .map((n) => (n.textContent || '').trim()));
       record('v6-3e 重新勾选「纸质版」：先前填入的尺码仍在（数据未被清除）',
         restored.some((t) => t.includes('170')), `标签 ${JSON.stringify(restored)}`);
+
+      /* ---------------- v6.1 三项修改（浏览器逐项验证） ---------------- */
+      // 需求 1：拥有形态分区字段顺序 —— 多选在前，两个尺码字段在后
+      const ownOrder = await page.evaluate(() => {
+        const section = document.querySelectorAll('.iw-form-section')[1];
+        const labels = Array.from(section.querySelectorAll('.iw-label')).map((el) => el.textContent || '');
+        const i = (t) => labels.findIndex((l) => l.startsWith(t));
+        return { labels, own: i('拥有形态'), esize: i('电子版尺码'), paper: i('纸质版尺码') };
+      });
+      record('v6.1-1 「拥有形态」分区顺序：拥有形态 → 电子版尺码 → 纸质版尺码',
+        ownOrder.own >= 0 && ownOrder.own < ownOrder.esize && ownOrder.esize < ownOrder.paper,
+        `分区标签序 ${JSON.stringify(ownOrder.labels)}`);
+
+      // 需求 2：状态及评价顺序 + 「计划」新枚举选项
+      const statusInfo = await page.evaluate(() => {
+        const section = document.querySelectorAll('.iw-form-section')[2];
+        const labels = Array.from(section.querySelectorAll('.iw-label')).map((el) => el.textContent || '');
+        const i = (t) => labels.findIndex((l) => l.startsWith(t));
+        const planSelect = document.querySelector('#fld-计划');
+        const options = planSelect ? Array.from(planSelect.options).map((o) => o.value) : [];
+        return { labels, done: i('做过'), rec: i('推荐'), plan: i('计划'), options };
+      });
+      record('v6.1-2 「状态及评价」分区顺序：做过 → 推荐 → 计划',
+        statusInfo.done >= 0 && statusInfo.done < statusInfo.rec && statusInfo.rec < statusInfo.plan,
+        `分区标签序 ${JSON.stringify(statusInfo.labels)}`);
+      record('v6.1-3 「计划」下拉选项为新枚举（在计划中/不想做/不是现在/未标记），旧选项消失',
+        ['在计划中', '不想做', '不是现在', '未标记'].every((v) => statusInfo.options.includes(v))
+          && !statusInfo.options.includes('想做') && !statusInfo.options.includes('不确定'),
+        `选项 ${statusInfo.options.join('/')}`);
+
+      // 需求 3：电子版尺码快捷标签双轨 + 联动保留
+      const esizeGroups = await page.evaluate(() => {
+        const field = Array.from(document.querySelectorAll('.iw-field')).find(
+          (el) => ((el.querySelector('.iw-label') || {}).textContent || '').startsWith('电子版尺码'),
+        );
+        if (!field) return null;
+        return Array.from(field.querySelectorAll('.iw-quick-tags'))
+          .map((g) => (g.querySelector('.iw-quick-tags-label') || {}).textContent || '');
+      });
+      record('v6.1-4 电子版尺码提供字母码/身高码两组快捷标签（与纸质版同款交互）',
+        !!esizeGroups && esizeGroups.length === 2 && esizeGroups[0] === '字母码' && esizeGroups[1] === '身高码',
+        `分组 ${esizeGroups ? esizeGroups.join('/') : '未找到电子版尺码字段'}`);
+
+      // v6.1：样本记录（#1）迁移后字母码全在身，先移除「M」再点快捷标签验证「点选即填入」
+      const removedM = await page.evaluate(() => {
+        const btn = document.querySelector('button[aria-label="移除标签 M"]');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      });
+      await new Promise((r) => setTimeout(r, 700));
+      const mGone = await page.evaluate(() => !document.querySelector('button[aria-label="移除标签 M"]'));
+      const clickedEs = await page.evaluate(() => {
+        const btn = document.querySelector('button[aria-label="电子版尺码 快捷字母码 M"]');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      });
+      await new Promise((r) => setTimeout(r, 700));
+      const esChipOn = await page.evaluate(() => !!document.querySelector('button[aria-label="移除标签 M"]'));
+      record('v6.1-5 点选电子版尺码快捷标签「M」即填入（点前先移除，可重新点选回填）',
+        removedM && mGone && clickedEs && esChipOn,
+        `移除 ${removedM}，移除后消失 ${mGone}，点击 ${clickedEs}，已选标签「M」${esChipOn ? '出现' : '未出现'}`);
+
+      await clickOwnChip('电子版');
+      await new Promise((r) => setTimeout(r, 700));
+      const esKept = await page.evaluate(() => {
+        const hint = document.querySelector('[data-testid="iw-kept-电子版尺码"]');
+        const esInputVisible = Array.from(document.querySelectorAll('input[placeholder]'))
+          .some((i) => (i.getAttribute('placeholder') || '').includes('电子版尺码'));
+        return { hint: hint ? hint.textContent || '' : '', esInputVisible };
+      });
+      record('v6.1-6 取消勾选「电子版」：输入隐藏、已填尺码保留并提示',
+        esKept.hint.includes('已保留') && !esKept.esInputVisible,
+        `提示「${esKept.hint}」，电子版输入框可见 ${esKept.esInputVisible}`);
+      await clickOwnChip('电子版');
+      await new Promise((r) => setTimeout(r, 700));
+      const esRestored = await page.evaluate(() => !!document.querySelector('button[aria-label="移除标签 M"]'));
+      record('v6.1-7 重新勾选「电子版」：已填的「M」仍在（数据未被清除）', esRestored,
+        esRestored ? '「M」已恢复显示' : '「M」丢失');
+
+      // 详情页：迁移后的电子版尺码标签与「计划」取值展示（锚定当前数据）
+      const esizeRec = allFile.records.find((r) => (r['电子版尺码'] || []).length > 0
+        && (r['拥有形态'] || []).includes('电子版'));
+      if (esizeRec) {
+        await goto(`#/detail/${esizeRec.id}`);
+        const detText = await bodyText();
+        const esTags = esizeRec['电子版尺码'];
+        record('v6.1-8 详情页展示电子版尺码双轨标签（迁移后标签原样展示）',
+          detText.includes('电子版尺码') && detText.includes(esTags.join('、')),
+          `#${esizeRec.id} 标签 ${esTags.length} 个（${esTags[0]}…${esTags[esTags.length - 1]}）`);
+        record('v6.1-9 详情页展示「计划」字段取值',
+          detText.includes('计划') && (!esizeRec['计划'] || detText.includes(esizeRec['计划'])),
+          `计划=${esizeRec['计划']}`);
+      } else {
+        record('v6.1-8 详情页展示电子版尺码双轨标签', false, '当前数据中未找到含电子版尺码标签的记录');
+      }
 
       // 需求 5：编号搜索（「#编号」与纯数字）
       await goto('#/list');
@@ -624,6 +721,10 @@ function apiPayload(name, buf) {
       record('导出列含「拥有形态」且不含旧的两个单选列（v5 合并）',
         columns.includes('拥有形态') && !columns.includes('电子版') && !columns.includes('纸质版'),
         columns.filter((c) => ['拥有形态', '电子版', '纸质版', '拥有电子版', '拥有纸质版'].includes(c)).join('、') || '未找到');
+      record('v6.1 导出列含「电子版尺码」与「计划」，旧列名（想做/电子版尺码组）消失',
+        columns.includes('电子版尺码') && columns.includes('计划')
+          && !columns.includes('想做') && !columns.includes('电子版尺码组'),
+        columns.filter((c) => ['电子版尺码', '计划', '想做', '电子版尺码组'].includes(c)).join('、') || '未找到相关列');
       record('导出列不含「关联」「电子版缺码」',
         !columns.includes('关联') && !columns.includes('电子版缺码'),
         columns.join('、').slice(0, 120));
@@ -775,6 +876,67 @@ function apiPayload(name, buf) {
     record('v4 写回载荷中不再含软删残留记录',
       Array.isArray(wroteRecords) && !wroteRecords.some((r) => 'deletedAt' in r),
       Array.isArray(wroteRecords) ? `写回 ${wroteRecords.length} 条，均无 deletedAt` : '未取到写回载荷');
+
+    /* ---------------- 阶段 C：v6.1 旧浏览器缓存兜底（自报 v5 但仍旧结构，不白屏、不脏写） ---------------- */
+    const staleBase = JSON.parse(recordsBuf.toString('utf8'));
+    const withEs = staleBase.records.find((r) => (r['拥有形态'] || []).includes('电子版'));
+    // 旧键形态 A：v4 结构（想做 + 电子版尺码组），却自报 schemaVersion 5
+    const staleA = { ...withEs };
+    delete staleA.计划;
+    delete staleA.电子版尺码;
+    staleA.想做 = '想做';
+    staleA.电子版尺码组 = ['女士全码'];
+    // 旧键形态 B：字符串形态的电子版尺码（历史脏缓存）
+    const staleB = { ...withEs, id: 990, 名称: '字符串尺码缓存样本' };
+    delete staleB.计划;
+    staleB.想做 = '不确定';
+    staleB.电子版尺码 = '大小童全码、男士全码';
+    const staleRecords = staleBase.records.filter((r) => r.id !== withEs.id).concat([staleA, staleB]);
+    const staleFile = {
+      schemaVersion: 5,
+      dataVersion: 999,
+      updatedAt: new Date().toISOString(),
+      recordCount: staleRecords.length,
+      records: staleRecords,
+    };
+    servedRecords = Buffer.from(JSON.stringify(staleFile), 'utf8');
+    const putBeforeC = putCount;
+    await page.evaluate((payload) => {
+      localStorage.clear();
+      localStorage.setItem('iw.config', JSON.stringify({
+        owner: 'AhDaiMolly', repo: 'info-workbench-data', branch: 'main', token: 'smoke-local-token', sessionOnly: false,
+      }));
+      localStorage.setItem('iw.cache', JSON.stringify({
+        schemaVersion: 5,
+        dataVersion: 999,
+        updatedAt: payload.updatedAt,
+        records: payload.records,
+        schema: payload.schema,
+        baseSha: payload.sha,
+        lastSyncedAt: payload.updatedAt,
+      }));
+    }, { records: staleRecords, schema: schemaObj, sha: MOCK_SHA, updatedAt: staleFile.updatedAt });
+    await page.goto(`http://127.0.0.1:${PORT}/#/list`, { waitUntil: 'networkidle2' });
+    await page.reload({ waitUntil: 'networkidle2' });
+    await new Promise((r) => setTimeout(r, 900));
+    const staleListOk = await page.evaluate(() => !!document.querySelector('.iw-table tbody tr'));
+    record('v6.1-C 旧缓存（自报 v5 但含旧键）加载不白屏，列表正常渲染',
+      staleListOk, staleListOk ? '列表已渲染' : '列表为空/白屏');
+
+    await goto(`#/detail/${staleA.id}`);
+    const staleADetail = await bodyText();
+    record('v6.1-C 「想做：想做」加载时归一为「计划：在计划中」，「女士全码」映射为字母码全码',
+      staleADetail.includes('计划') && staleADetail.includes('在计划中')
+        && staleADetail.includes('XS、S、M、L、XL、2XL、3XL、4XL'),
+      `#${staleA.id} 详情已含新字段值`);
+
+    await goto(`#/detail/${staleB.id}`);
+    const staleBDetail = await bodyText();
+    record('v6.1-C 字符串尺码拆开映射（大小童全码→身高码；男士全码丢弃），「不确定」归一为「不是现在」',
+      staleBDetail.includes('不是现在') && staleBDetail.includes('100、110、120、130、140、150、160、170、180'),
+      `#${staleB.id} 详情已含映射结果`);
+    record('v6.1-C 兜底归一只发生在内存，未触发写回（PUT 不增加）', putCount === putBeforeC,
+      `PUT 次数 ${putCount - putBeforeC}`);
 
     record('运行期间无 JS 报错', consoleErrors.length === 0,
       consoleErrors.length ? consoleErrors.slice(0, 3).join(' | ') : '无');

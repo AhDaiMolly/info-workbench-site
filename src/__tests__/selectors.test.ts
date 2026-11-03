@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applyQuery, buildIndexes, computeStats, highlightParts, matchesFilters,
+  applyQuery, buildIndexes, computeStats, expandEsizeFilterValues, highlightParts, matchesFilters,
   searchIds, sortRecords, tokenize,
 } from '../store/selectors';
 import { EMPTY_FILTERS } from '../types';
@@ -25,11 +25,11 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
     季节: '',
     教程: '未知',
     拥有形态: [],
-    电子版尺码组: [],
+    电子版尺码: [],
     纸质版尺码: [],
     推荐: '未评价',
     做过: false,
-    想做: '未标记',
+    计划: '未标记',
     备注: '',
     创建时间: '2026-01-01T00:00:00.000Z',
     更新时间: '2026-01-01T00:00:00.000Z',
@@ -40,25 +40,25 @@ function makeRecord(over: Partial<RecordItem> & { id: number }): RecordItem {
 const sample: RecordItem[] = [
   makeRecord({
     id: 1, 名称: '棉麻衬衫', 品牌: '品牌甲', 分类: ['女装'], 款式: '衬衣',
-    季节: '夏', 教程: '有', 推荐: '推荐', 做过: true, 想做: '想做',
+    季节: '夏', 教程: '有', 推荐: '推荐', 做过: true, 计划: '在计划中',
     拥有形态: ['电子版'],
     备注: '面料透气，夏天很合适', 更新时间: '2026-03-02T00:00:00.000Z',
   }),
   makeRecord({
     id: 2, 名称: '羊毛外套', 品牌: '品牌乙', 分类: ['女装', '男装'], 款式: '外套',
-    季节: '冬', 教程: '无', 拥有形态: ['电子版', '纸质版'], 电子版尺码组: ['女士全码'],
-    推荐: '未评价', 想做: '不确定', 备注: '冬天保暖，含羊毛',
+    季节: '冬', 教程: '无', 拥有形态: ['电子版', '纸质版'], 电子版尺码: ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'],
+    推荐: '未评价', 计划: '不是现在', 备注: '冬天保暖，含羊毛',
     更新时间: '2026-03-01T00:00:00.000Z',
   }),
   makeRecord({
     id: 3, 名称: '休闲长裤', 品牌: '品牌甲', 分类: ['男装'], 款式: '长裤',
     季节: '春秋', 教程: '未知', 拥有形态: [],
-    想做: '不想做', 备注: '普通款',
+    计划: '不想做', 备注: '普通款',
     更新时间: '2026-02-01T00:00:00.000Z',
   }),
   makeRecord({
     id: 4, 名称: '旧款卫衣', 品牌: '品牌丙', 分类: [], 款式: '卫衣',
-    季节: '', 推荐: '不推荐', 做过: false, 想做: '未标记',
+    季节: '', 推荐: '不推荐', 做过: false, 计划: '未标记',
     拥有形态: [], 备注: '有点旧了',
     更新时间: '2026-01-01T00:00:00.000Z',
   }),
@@ -193,7 +193,7 @@ describe('看板统计', () => {
     const stats = computeStats(sample);
     expect(stats.total).toBe(4);
     expect(stats.做过).toBe(1);
-    expect(stats.想做).toBe(1);
+    expect(stats.计划).toBe(1);
     expect('有教程' in (stats as unknown as Record<string, unknown>)).toBe(false);
   });
 
@@ -283,5 +283,83 @@ describe('v6 · 需求 5 搜索支持编号', () => {
   it('applyQuery 走编号筛选同样生效', () => {
     const hits = applyQuery(sample, EMPTY_FILTERS, '#2');
     expect(hits.map((r) => r.id)).toEqual([2]);
+  });
+});
+
+
+/* ------------------------------------------------------------------
+ * v6.1 新增用例：需求 2（计划字段）与需求 3（电子版尺码双轨）
+ * ------------------------------------------------------------------ */
+describe('v6.1 · 需求 2 计划字段筛选', () => {
+  it('按「在计划中」筛选只命中计划中的记录', () => {
+    expect(sample.filter((r) => matchesFilters(r, filters({ 计划: ['在计划中'] }))).map((r) => r.id)).toEqual([1]);
+  });
+
+  it('按「不是现在」筛选命中改名后的旧「不确定」记录', () => {
+    expect(sample.filter((r) => matchesFilters(r, filters({ 计划: ['不是现在'] }))).map((r) => r.id)).toEqual([2]);
+  });
+
+  it('多选项取并集（在计划中 + 不想做）', () => {
+    expect(sample.filter((r) => matchesFilters(r, filters({ 计划: ['在计划中', '不想做'] }))).map((r) => r.id)).toEqual([1, 3]);
+  });
+
+  it('看板完成度口径含全部四个新选项', () => {
+    const stats = computeStats(sample);
+    expect(stats.completion.map((c) => c.name)).toEqual(['在计划中', '不是现在', '不想做', '未标记']);
+    expect(stats.completion.find((c) => c.name === '在计划中')?.value).toBe(1);
+    expect(stats.completion.find((c) => c.name === '不是现在')?.value).toBe(1);
+    expect(stats.completion.find((c) => c.name === '不想做')?.value).toBe(1);
+    expect(stats.completion.find((c) => c.name === '未标记')?.value).toBe(1);
+  });
+});
+
+describe('v6.1 · 需求 3 电子版尺码双轨筛选', () => {
+  it('按字母码标签命中电子版尺码含该标签的记录', () => {
+    expect(sample.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['XS'] }))).map((r) => r.id)).toEqual([2]);
+    expect(sample.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['100'] }))).map((r) => r.id)).toEqual([]);
+  });
+
+  it('多标签 AND 语义：必须同时包含', () => {
+    expect(sample.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['XS', 'M'] }))).map((r) => r.id)).toEqual([2]);
+    expect(sample.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['XS', '100'] }))).map((r) => r.id)).toEqual([]);
+  });
+
+  it('身高码标签可独立筛选', () => {
+    const tall = [makeRecord({ id: 21, 名称: '儿童连衣裙', 电子版尺码: ['110', '120'] })];
+    expect(tall.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['110'] }))).map((r) => r.id)).toEqual([21]);
+  });
+});
+
+describe('v6.1 · 需求 3 旧尺码组筛选值扩展（expandEsizeFilterValues）', () => {
+  it('「女士全码」扩展为全部字母码（记录必须含全部字母码才命中）', () => {
+    expect(expandEsizeFilterValues(['女士全码'])).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+    // id2 拥有全部字母码 → 命中；只有部分字母码 → 不命中
+    expect(sample.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['女士全码'] }))).map((r) => r.id)).toEqual([2]);
+    const partial = [makeRecord({ id: 22, 名称: '部分尺码', 电子版尺码: ['XS', 'M'] })];
+    expect(partial.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['女士全码'] }))).length).toBe(0);
+  });
+
+  it('「大小童全码」扩展为全部身高码', () => {
+    expect(expandEsizeFilterValues(['大小童全码'])).toEqual(['100', '110', '120', '130', '140', '150', '160', '170', '180']);
+    const kids = [makeRecord({ id: 23, 名称: '童装套装', 电子版尺码: ['100', '110', '120', '130', '140', '150', '160', '170', '180'] })];
+    expect(kids.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['大小童全码'] }))).map((r) => r.id)).toEqual([23]);
+  });
+
+  it('「男士全码」「仅小童」映射为永不命中的哨兵（迁移时这两类被置空）', () => {
+    const out = expandEsizeFilterValues(['男士全码', '仅小童']);
+    expect(out.every((v) => !['XS', '100'].includes(v))).toBe(true);
+    const any = [makeRecord({ id: 24, 名称: '任意记录' })];
+    expect(any.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['男士全码'] }))).length).toBe(0);
+    expect(any.filter((r) => matchesFilters(r, filters({ 电子版尺码: ['仅小童'] }))).length).toBe(0);
+  });
+
+  it('普通标签原样透传，重复值去重', () => {
+    expect(expandEsizeFilterValues(['XS', 'XS', '110'])).toEqual(['XS', '110']);
+  });
+
+  it('旧预设值与新标签可混用（并集去重）', () => {
+    const out = expandEsizeFilterValues(['女士全码', 'XS']);
+    expect(out.filter((v) => v === 'XS').length).toBe(1);
+    expect(out).toContain('4XL');
   });
 });

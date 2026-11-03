@@ -16,7 +16,7 @@ import { EMPTY_FILTERS } from '../types';
 import { DEFAULT_SCHEMA, mergeSchema } from '../schema';
 import { buildIndexes, type Indexes } from './selectors';
 import {
-  applyMigrations, findLegacyFieldKeys, findShellRecords, nextRecordId, validateRecords,
+  applyMigrations, findLegacyFieldKeys, findShellRecords, nextRecordId, normalizeToCurrent, validateRecords,
 } from './migrations';
 import {
   appendActionLog, clearConfig, readActionLog, readBaseline, readCache, readConfigMeta,
@@ -228,9 +228,13 @@ function initState(): AppState {
   const cache = readCache();
   const pending = readPending();
   const config = readConfigMeta();
-  const baseline = readBaseline();
 
   const schema = mergeSchema(DEFAULT_SCHEMA, cache?.schema ?? undefined);
+
+  // v6.1：持久化基线快照可能还是迁移前的旧结构（「想做」/「电子版尺码组」旧键、
+  // 字符串型电子版尺码）。与本地已迁移记录做三方合并前必须先归一化到当前结构，
+  // 否则基线与 local 逐字段不等，会被误判成「本地已分叉」。
+  const baseline = normalizeToCurrent(readBaseline() ?? [], schema);
 
   // v3：本地缓存里的记录可能还是旧结构（旧键名 / 布尔拥有形态 / 已删除字段），
   // 启动时就地迁移 —— 新版页面读旧数据不白屏、不丢字段。
@@ -409,9 +413,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const base: RecordItem = {
         id,
         名称: name, 品牌: '', 分类: [], 款式: '', 季节: '', 教程: '未知',
-        电子版尺码组: [],
+        电子版尺码: [],
         拥有形态: [], 纸质版尺码: [], 推荐: '未评价', 做过: false,
-        想做: '未标记', 备注: '',
+        计划: '未标记', 备注: '',
         创建时间: now, 更新时间: now,
       } as RecordItem;
       // 名称以校验过的值为准（调用方传进来的空白/未 trim 值一律丢弃）
@@ -566,7 +570,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const plan = planRemoteSync({
           local: st.records,
           remote: migration.records,
-          baseline: readBaseline(),
+          baseline: normalizeToCurrent(readBaseline() ?? [], st.schema),
           pending: st.pending,
         });
 
@@ -670,7 +674,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const plan = planRemoteSync({
             local: st.records,
             remote: remoteRecords,
-            baseline: readBaseline(),
+            baseline: normalizeToCurrent(readBaseline() ?? [], st.schema),
             pending: st.pending,
           });
           if (plan.conflicts.length) {
@@ -786,7 +790,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const plan = planRemoteSync({
           local: st.records,
           remote: detail.remoteRecords,
-          baseline: readBaseline(),
+          baseline: normalizeToCurrent(readBaseline() ?? [], st.schema),
           pending: st.pending,
         });
         records = plan.records;
@@ -977,7 +981,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const st = stateRef.current;
     const decision = decideAutoPull({
       local: st.records,
-      baseline: readBaseline(),
+      baseline: normalizeToCurrent(readBaseline() ?? [], st.schema),
       pendingCount: st.pending.length,
     });
     if (!decision.allow) {
