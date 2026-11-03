@@ -90,6 +90,10 @@ function apiPayload(name, buf) {
 
   const recordsBuf = fs.readFileSync(path.join(DATA_DIR, RECORDS_FILE));
   const schemaBuf = fs.readFileSync(path.join(DATA_DIR, SCHEMA_FILE));
+  // 全部记录：断言一律锚定到当前数据，避免线上数据演进后出现假失败
+  const allFile = JSON.parse(recordsBuf.toString('utf8'));
+  // 与产品代码 src/store/selectors.ts 的排序比较器保持一致
+  const APP_COLLATOR = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' });
 
   // 拦截期间对外返回的文件（阶段 B 会换成「脏数据」版本）
   let servedRecords = recordsBuf;
@@ -320,9 +324,18 @@ function apiPayload(name, buf) {
     const detailMissing = sectionTitles.filter((t) => !detailInfo.titles.some((x) => x.includes(t)));
     record('详情页渲染五个分区', detailMissing.length === 0,
       detailMissing.length ? `缺少：${detailMissing.join('、')}` : detailInfo.titles.join(' / '));
-    record('详情页显示迁移后的款式「打底衣」',
-      detailInfo.text.includes('打底衣') && !detailInfo.text.includes('秋衣秋裤'),
-      '记录 22 的款式应为 打底衣');
+    const rec22 = allFile.records.find((r) => r.id === 22);
+    const style22 = await page.evaluate(() => {
+      const row = Array.from(document.querySelectorAll('.iw-kv')).find((n) => {
+        const k = n.querySelector('.iw-kv-key');
+        return k && (k.textContent || '').trim() === '款式';
+      });
+      const v = row ? row.querySelector('.iw-kv-val') : null;
+      return v ? (v.textContent || '').trim() : '';
+    });
+    record('详情页「款式」与当前数据一致',
+      !!rec22 && style22 === String(rec22.款式 ?? '').trim(),
+      `记录 22 的款式：页面「${style22}」／数据「${rec22 ? String(rec22.款式 ?? '').trim() : '?'}」`);
     record('详情页不含已删字段', !detailInfo.text.includes('电子版缺码') && !detailInfo.text.includes('关联'), '未出现');
 
     /* 5. 看板（v4 第 3 条：无「有教程」统计） */
@@ -363,11 +376,200 @@ function apiPayload(name, buf) {
       && (await clickByText('导出全部 JSON', '.iw-main')) !== null,
       '含「导出全部 Excel」「导出全部 JSON」');
     record('v4 设置页无「回收站」入口', !settingsText.includes('回收站'), '未出现');
-    record('v4 设置页「数据体检」识别出空壳记录 795',
-      settingsText.includes('数据体检') && settingsText.includes('#795'),
-      settingsText.includes('#795') ? '数据体检列出了 #795' : '未识别出 #795');
+    const shellIdsNow = allFile.records.filter((r) => !String(r.名称 ?? '').trim()).map((r) => `#${r.id}`);
+    record('v4 设置页「数据体检」与当前数据一致（空壳记录编号）',
+      settingsText.includes('数据体检')
+        && (shellIdsNow.length
+          ? shellIdsNow.every((id) => settingsText.includes(id))
+          : settingsText.includes('没有发现「名称为空」的导入遗留记录')),
+      shellIdsNow.length
+        ? `当前数据 ${shellIdsNow.length} 条空壳记录：${shellIdsNow.join('、')}`
+        : '当前数据无「名称为空」的空壳记录');
+
+    /* ---------------- v6 五项体验优化（浏览器逐项验证） ---------------- */
+    // 本段跑在完整数据集（795 条）已加载的阶段，断言一律锚定当前数据
+    await page.evaluate(() => {
+      localStorage.removeItem('iw.prefs');
+    });
+
+    // 需求 1：设置页底部版本信息（构建时注入 version / 构建日期 / 提交）
+    const verInfo = await page.evaluate(() => {
+      const card = document.querySelector('[data-testid="iw-version-info"]');
+      const text = document.querySelector('[data-testid="iw-version-text"]');
+      return {
+        hasCard: !!card,
+        text: text ? text.textContent || '' : '',
+        bodyHasFields: ['版本号', '构建日期', '提交'].every((t) => (document.body.innerText || '').includes(t)),
+      };
+    });
+    record('v6-1 设置页展示「版本信息」卡片（版本号/构建日期/提交）',
+      verInfo.hasCard && verInfo.bodyHasFields && verInfo.text.includes('v6.0.0'),
+      verInfo.hasCard ? `版本文本：${verInfo.text}` : '未找到版本信息卡片');
+
+    // 样本：仅勾选「电子版」且有备注的记录（从当前数据里挑）
+    const target = allFile.records.find((r) =>
+      (r['拥有形态'] || []).includes('电子版') && !(r['拥有形态'] || []).includes('纸质版') && String(r['备注'] || '').trim());
+    record('v6 冒烟样本存在（仅电子版 + 有备注的记录）', !!target,
+      target ? `#${target.id} ${target['名称']}` : '当前数据中未找到仅电子版且有备注的记录');
+
+    if (target) {
+      // 需求 2：详情页备注整行块布局（不再是半宽格子里的挤压）
+      await goto(`#/detail/${target.id}`);
+      const noteInfo = await page.evaluate(() => {
+        const nodes = Array.from(document.querySelectorAll('.iw-kv-note'));
+        if (!nodes.length) return { found: false };
+        const n = nodes[0];
+        const style = getComputedStyle(n);
+        const val = n.querySelector('.iw-kv-val');
+        const valStyle = val ? getComputedStyle(val) : null;
+        return {
+          found: true,
+          display: style.display,
+          gridCol: style.gridColumn,
+          whiteSpace: valStyle ? valStyle.whiteSpace : '',
+        };
+      });
+      record('v6-2 详情页备注为整行块布局（标签独占一行、正文占满整行）',
+        noteInfo.found && noteInfo.display === 'block' && noteInfo.gridCol === '1 / -1' && noteInfo.whiteSpace === 'pre-wrap',
+        noteInfo.found ? `display=${noteInfo.display}，grid-column=${noteInfo.gridCol}，white-space=${noteInfo.whiteSpace}` : '未找到 .iw-kv-note');
+
+      // 需求 3：形态-尺码联动
+      await goto(`#/editor/${target.id}`);
+      const linkageHidden = await page.evaluate(() => {
+        const text = document.body.innerText || '';
+        return {
+          hasPaperInput: !!document.querySelector('input[placeholder="输入纸质版尺码后回车"]'),
+          hasEsize: text.includes('电子版尺码组'),
+          hasPaperLabel: text.includes('纸质版尺码'),
+        };
+      });
+      record('v6-3a 仅勾选「电子版」时：电子版尺码组显示、纸质版尺码不出现',
+        linkageHidden.hasEsize && !linkageHidden.hasPaperInput && !linkageHidden.hasPaperLabel,
+        `电子版尺码组=${linkageHidden.hasEsize}，纸质版尺码输入=${linkageHidden.hasPaperInput}`);
+
+      const clickOwnChip = (label) => page.evaluate((t) => {
+        const group = document.querySelector('[role="group"][aria-label="拥有形态"]');
+        if (!group) return false;
+        const chip = Array.from(group.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === t);
+        if (!chip) return false;
+        chip.click();
+        return true;
+      }, label);
+      const chipState = () => page.evaluate(() => {
+        const group = document.querySelector('[role="group"][aria-label="拥有形态"]');
+        return group
+          ? Array.from(group.querySelectorAll('button')).map((b) => `${(b.textContent || '').trim()}=${b.getAttribute('aria-pressed')}`)
+          : [];
+      });
+      const clicked3b = await clickOwnChip('纸质版');
+      await new Promise((r) => setTimeout(r, 700));
+      const state3b = await chipState();
+      const paperInput3b = await page.evaluate(() => !!document.querySelector('input[placeholder="输入纸质版尺码后回车"]'));
+      record('v6-3b 勾选「纸质版」后纸质版尺码输入出现',
+        clicked3b && paperInput3b && state3b.some((s) => s.startsWith('纸质版=true')),
+        `点击返回 ${clicked3b}，chip 状态 ${state3b.join('/') || '无'}，输入框存在 ${paperInput3b}`);
+
+      // 真实键盘输入 + 回车，把「170」提交成标签（受控输入框必须走真实键盘事件）
+      let typed3c = false;
+      const paperHandle = await page.evaluateHandle(() => document.querySelector('input[placeholder="输入纸质版尺码后回车"]'));
+      if (paperHandle) {
+        await paperHandle.focus();
+        await page.keyboard.type('170', { delay: 40 });
+        await page.keyboard.press('Enter');
+        await new Promise((r) => setTimeout(r, 500));
+        typed3c = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-chip-on'))
+          .some((n) => (n.textContent || '').trim().includes('170')));
+      }
+      record('v6-3c 在纸质版尺码中填入自定义值（回车提交为标签）', typed3c,
+        typed3c ? '「170」已作为标签加入' : '未检测到「170」标签');
+
+      const clicked3d = await clickOwnChip('纸质版');
+      await new Promise((r) => setTimeout(r, 700));
+      const kept3d = await page.evaluate(() => {
+        const hint = document.querySelector('[data-testid="iw-kept-纸质版尺码"]');
+        return {
+          inputExists: !!document.querySelector('input[placeholder="输入纸质版尺码后回车"]'),
+          hint: hint ? (hint.textContent || '').trim() : '',
+        };
+      });
+      record('v6-3d 取消勾选「纸质版」：输入隐藏、已填值保留并提示',
+        clicked3d && !kept3d.inputExists && kept3d.hint.includes('已保留'),
+        `点击 ${clicked3d}，输入框存在 ${kept3d.inputExists}，提示「${kept3d.hint}」`);
+
+      // 重新勾选 → 原值仍在（验证「保存不会清除」）
+      await clickOwnChip('纸质版');
+      await new Promise((r) => setTimeout(r, 600));
+      const restored = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-chip-on'))
+        .map((n) => (n.textContent || '').trim()));
+      record('v6-3e 重新勾选「纸质版」：先前填入的尺码仍在（数据未被清除）',
+        restored.some((t) => t.includes('170')), `标签 ${JSON.stringify(restored)}`);
+
+      // 需求 5：编号搜索（「#编号」与纯数字）
+      await goto('#/list');
+      const searchPlaceholder = await page.evaluate(() => {
+        const i = document.querySelector('input[placeholder*="编号"]');
+        return i ? i.getAttribute('placeholder') || '' : '';
+      });
+      record('v6-5 搜索框支持编号（占位含「编号」）', !!searchPlaceholder, `占位「${searchPlaceholder}」`);
+
+      const typeSearch = async (text) => {
+        const h = await page.evaluateHandle(() => document.querySelector('input[placeholder*="编号"]'));
+        if (!h) return false;
+        await h.focus();
+        await page.keyboard.down('Control');
+        await page.keyboard.press('KeyA');
+        await page.keyboard.up('Control');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(text, { delay: 40 });
+        return true;
+      };
+      await typeSearch(`#${target.id}`);
+      const searchHash = await waitFor(async () => {
+        const st = await page.evaluate((name) => {
+          const rows = Array.from(document.querySelectorAll('.iw-table tbody tr'));
+          return { count: rows.length, hit: rows.some((r) => (r.textContent || '').includes(name)) };
+        }, String(target['名称']));
+        return st.count === 1 && st.hit;
+      }, 10000);
+      record('v6-5b 用「#编号」搜索只命中该记录', searchHash,
+        searchHash ? `#${target.id}（${target['名称']}）唯一命中` : '未唯一命中');
+
+      await typeSearch(String(target.id));
+      const digitHit = await waitFor(async () => {
+        const st = await page.evaluate((name) => {
+          const rows = Array.from(document.querySelectorAll('.iw-table tbody tr'));
+          return { count: rows.length, hit: rows.some((r) => (r.textContent || '').includes(name)) };
+        }, String(target['名称']));
+        return st.hit;
+      }, 10000);
+      record('v6-5c 用纯数字编号搜索也能命中该记录', digitHit,
+        digitHit ? `纯数字「${target.id}」命中「${target['名称']}」` : '未命中');
+    }
+
+    // 需求 4：默认排序为名称拼音升序（清掉本地偏好后重进列表）
+    await page.evaluate(() => { localStorage.removeItem('iw.prefs'); });
+    await goto('#/list');
+    const sortInfo = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('.iw-table tbody tr'));
+      const cells = rows.length ? Array.from(rows[0].querySelectorAll('td')).map((c) => (c.textContent || '').trim()) : [];
+      const heads = Array.from(document.querySelectorAll('.iw-table thead th')).map((h) => (h.textContent || '').trim());
+      return { firstRow: cells, heads, hash: window.location.hash, rowCount: rows.length };
+    });
+    const expectedFirst = allFile.records
+      .filter((r) => String(r['名称'] || '').trim())
+      .slice()
+      .sort((a, b) => APP_COLLATOR.compare(String(a['名称']), String(b['名称'])))[0];
+    record('v6-4 列表默认按名称拼音升序（表头「名称↑」、首行 = 拼音序第一条、URL 不带排序参数）',
+      !!expectedFirst
+        && sortInfo.hash.includes('/list') && !sortInfo.hash.includes('sort=')
+        && sortInfo.heads.some((h) => h.startsWith('名称') && h.includes('↑'))
+        && sortInfo.firstRow.some((c) => c.includes(String(expectedFirst['名称']))),
+      `表头 ${JSON.stringify(sortInfo.heads.slice(0, 3))}，首行=${sortInfo.firstRow.slice(0, 3).join(' | ')}，`
+        + `拼音序第一条=${expectedFirst ? expectedFirst['名称'] : '?'}，hash=${sortInfo.hash}`);
+
 
     /* 6b. 操作日志：连续触发 5 次导出，只保留最近 3 条 */
+    await goto('/settings');
     for (let i = 0; i < 5; i += 1) {
       await clickByText('导出全部 JSON', '.iw-main');
       await new Promise((r) => setTimeout(r, 350));
@@ -527,6 +729,12 @@ function apiPayload(name, buf) {
     await page.goto(`http://127.0.0.1:${PORT}/#/settings`, { waitUntil: 'networkidle2' });
     await page.reload({ waitUntil: 'networkidle2' });
     await new Promise((r) => setTimeout(r, 900));
+
+    // 阶段 B 的脏数据里含一条「名称为空」的空壳记录（#795）——「数据体检」必须把它识别出来
+    const dirtyHealth = await bodyText();
+    record('v4 阶段 B：脏数据里的空壳记录被「数据体检」识别（#795）',
+      dirtyHealth.includes('数据体检') && dirtyHealth.includes('#795'),
+      dirtyHealth.includes('#795') ? '数据体检列出了 #795' : '未识别出 #795');
 
     const putBefore = putCount;
     await clickByText('同步到 GitHub', '.iw-main');
