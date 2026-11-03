@@ -1,13 +1,37 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import { readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 
 /**
  * 信息汇总工作台 · 构建配置
  * base: './' —— 相对路径产物，GitHub Pages 的
  * https://OWNER.github.io/REPO/ 与 https://OWNER.github.io/ 两种形态都能正常加载（架构 8 阶段三）。
+ *
+ * v6（需求 1）：构建时注入版本信息（package.json 版本号 + 构建日期 + 提交短哈希），
+ * 由 src/version.ts 读取，展示在「设置」页底部信息区。
  */
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
+
+/** 提交短哈希：CI / 本地都能取到；取不到（源码包解压等）时降级为 unknown */
+function readCommitShort(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
 export default defineConfig({
   base: './',
+  define: {
+    __WB_BUILD_INFO__: JSON.stringify({
+      version: pkg.version,
+      builtAt: new Date().toISOString(),
+      commit: readCommitShort(),
+    }),
+  },
   plugins: [react()],
   build: {
     outDir: 'dist',

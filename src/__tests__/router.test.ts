@@ -58,9 +58,14 @@ describe('hash 路由解析', () => {
 });
 
 describe('hash 路由构造与往返', () => {
-  it('默认列表不产生多余参数', () => {
-    expect(buildHash({ view: 'list', filters: filters(), query: '', sort: { key: '更新时间', dir: 'desc' }, page: 1 }))
+  it('默认列表不产生多余参数（v6：默认排序为「名称升序」）', () => {
+    expect(buildHash({ view: 'list', filters: filters(), query: '', sort: { key: '名称', dir: 'asc' }, page: 1 }))
       .toBe('#/list');
+    // 非默认排序才写进 URL 参数
+    expect(buildHash({ view: 'list', filters: filters(), query: '', sort: { key: '更新时间', dir: 'desc' }, page: 1 }))
+      .toContain('sort=');
+    expect(buildHash({ view: 'list', filters: filters(), query: '', sort: { key: '更新时间', dir: 'desc' }, page: 1 }))
+      .toContain('dir=desc');
   });
 
   it('筛选 / 搜索 / 排序 / 页码往返一致', () => {

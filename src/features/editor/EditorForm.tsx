@@ -346,18 +346,40 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
               <div className="iw-form-grid">
                 {section.fields
                   .filter((f) => !f.system && !f.readonly)
-                  .map((f) => (
-                    <div key={f.jsonKey} className={`iw-field${f.long ? ' iw-span-2' : ''}`}>
-                      <label className="iw-label" htmlFor={`fld-${f.jsonKey}`}>
-                        {f.label}
-                        {f.required ? <span className="iw-req">*</span> : null}
-                      </label>
-                      {renderControl(f)}
-                      {errors[f.jsonKey] ? (
-                        <div className="iw-field-error">{errors[f.jsonKey]}</div>
-                      ) : null}
-                    </div>
-                  ))}
+                  .map((f) => {
+                    // v6（需求 3）：形态-尺码联动 —— 勾选「电子版」才展示电子版尺码组，
+                    // 勾选「纸质版」才展示纸质版尺码；都不选则都不展示。
+                    // 取消勾选时已填的尺码「保留数据、仅隐藏输入」，并在原位给出提示（保存不会清除）。
+                    const ownership = (values.拥有形态 as string[] | undefined) ?? [];
+                    let linkedFormat: string | null = null;
+                    if (f.jsonKey === '电子版尺码组') linkedFormat = '电子版';
+                    if (f.jsonKey === '纸质版尺码') linkedFormat = '纸质版';
+                    if (linkedFormat && !ownership.includes(linkedFormat)) {
+                      const v = values[f.jsonKey];
+                      const hasFilled = Array.isArray(v)
+                        ? v.length > 0
+                        : v !== undefined && v !== null && String(v).trim() !== '';
+                      return hasFilled ? (
+                        <div key={f.jsonKey} className="iw-field iw-span-2">
+                          <div className="iw-field-hint" data-testid={`iw-kept-${f.jsonKey}`}>
+                            未勾选「{linkedFormat}」：已填的「{f.label}」已保留（保存不会清除），重新勾选后可继续编辑。
+                          </div>
+                        </div>
+                      ) : null;
+                    }
+                    return (
+                      <div key={f.jsonKey} className={`iw-field${f.long ? ' iw-span-2' : ''}`}>
+                        <label className="iw-label" htmlFor={`fld-${f.jsonKey}`}>
+                          {f.label}
+                          {f.required ? <span className="iw-req">*</span> : null}
+                        </label>
+                        {renderControl(f)}
+                        {errors[f.jsonKey] ? (
+                          <div className="iw-field-error">{errors[f.jsonKey]}</div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
               </div>
             )}
           </div>

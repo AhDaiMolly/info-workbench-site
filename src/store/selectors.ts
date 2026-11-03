@@ -4,7 +4,7 @@
  * 口径与 PRD 第 5.4 / 5.5 / 6 节一致：
  *   · 多条件 AND：不同字段之间取交集
  *   · 同字段多值 OR：字段内命中任一选项即返回（分类为「选项级匹配」）
- *   · 搜索范围：名称、品牌、备注（PRD 第 5.5 节）
+ *   · 搜索范围：名称、品牌、备注、编号（v6 新增编号；PRD 第 5.5 节基础上有扩展）
  *   · 看板：分类按「选项级计数」——多值记录在每个命中的选项各计 1 次
  *
  * v3 变更：
@@ -54,9 +54,11 @@ export function tokenize(text: string): string[] {
   return out;
 }
 
-/** 记录的可搜索文本 */
+/** 记录的可搜索文本（v6：编号也纳入搜索范围，支持「#7」或纯数字两种写法） */
 export function searchBlob(r: RecordItem): string {
-  return [r.名称 ?? '', r.品牌 ?? '', r.备注 ?? '']
+  // 编号只以「#7」形式入 blob：拉丁词元化后即得 "7"，纯数字查询可命中；
+  // 不再重复拼纯数字串，避免「#3」「3」相邻拼出「#33」造成误命中。
+  return [r.名称 ?? '', r.品牌 ?? '', r.备注 ?? '', `#${r.id}`]
     .map((s) => String(s).toLowerCase())
     .join(FIELD_SEP);
 }
@@ -163,15 +165,18 @@ export function searchIds(records: RecordItem[], query: string, idx?: Indexes): 
 
   for (const seg of segments) {
     let segIds: number[] | null = null;
-    if (CJK.test(seg)) {
-      if (seg.length <= 3) {
-        segIds = index.tokens.get(seg) ?? [];
+    // v6（需求 5）：编号搜索 —— 「#7」与「7」都指向编号 7；
+    // 倒排索引按拉丁词元（纯数字）存储，因此查询时剥掉前导 # 再查。
+    const norm = CJK.test(seg) ? seg : seg.replace(/^#+/, '');
+    if (CJK.test(norm)) {
+      if (norm.length <= 3) {
+        segIds = index.tokens.get(norm) ?? [];
       } else {
         // 长中文词：先用 3 字词元缩小候选，再用子串精确校验
-        segIds = index.tokens.get(seg.slice(0, 3)) ?? [];
+        segIds = index.tokens.get(norm.slice(0, 3)) ?? [];
       }
     } else {
-      segIds = index.tokens.get(seg) ?? [];
+      segIds = index.tokens.get(norm) ?? [];
     }
     candidates = candidates === null ? segIds : intersect(candidates, segIds);
     if (candidates.length === 0) return [];

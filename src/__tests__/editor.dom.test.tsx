@@ -178,8 +178,16 @@ describe('v5 · R5 拥有形态多选', () => {
 });
 
 describe('v5 · R4 纸质版尺码快捷标签', () => {
+  // v6（需求 3）：纸质版尺码现在只在勾选「纸质版」后出现，测试需先勾选形态
+  function enableOwnership(container: HTMLElement, label: string) {
+    const group = container.querySelector('[role="group"][aria-label="拥有形态"]')!;
+    const chip = Array.from(group.querySelectorAll('button')).find((b) => b.textContent === label)!;
+    fireEvent.click(chip);
+  }
+
   it('提供字母码与身高码两组快捷标签', () => {
     const { container } = render(<EditorForm recordId={7} />);
+    enableOwnership(container, '纸质版');
     const groups = Array.from(container.querySelectorAll('.iw-quick-tags'));
     expect(groups.length).toBe(2);
     expect(groups[0].querySelector('.iw-quick-tags-label')?.textContent).toBe('字母码');
@@ -188,6 +196,7 @@ describe('v5 · R4 纸质版尺码快捷标签', () => {
 
   it('字母码覆盖 XS–4XL，身高码覆盖 100–180 步长 10', () => {
     const { container } = render(<EditorForm recordId={7} />);
+    enableOwnership(container, '纸质版');
     const groups = Array.from(container.querySelectorAll('.iw-quick-tags'));
     const letters = Array.from(groups[0].querySelectorAll('button')).map((b) => b.textContent);
     expect(letters).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
@@ -196,7 +205,8 @@ describe('v5 · R4 纸质版尺码快捷标签', () => {
   });
 
   it('点选快捷标签即填入，再点一次取消', () => {
-    render(<EditorForm recordId={7} />);
+    const { container } = render(<EditorForm recordId={7} />);
+    enableOwnership(container, '纸质版');
     const btn = screen.getByLabelText('纸质版尺码 快捷字母码 L');
     fireEvent.click(btn);
     expect(screen.getByLabelText('移除标签 L')).toBeTruthy();
@@ -205,7 +215,8 @@ describe('v5 · R4 纸质版尺码快捷标签', () => {
   });
 
   it('仍可自由补充自定义尺码', () => {
-    render(<EditorForm recordId={7} />);
+    const { container } = render(<EditorForm recordId={7} />);
+    enableOwnership(container, '纸质版');
     const input = screen.getByPlaceholderText('输入纸质版尺码后回车') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '165' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -213,11 +224,72 @@ describe('v5 · R4 纸质版尺码快捷标签', () => {
   });
 
   it('保存时把快捷标签选中的值写进纸质版尺码', () => {
-    render(<EditorForm recordId={7} />);
+    const { container } = render(<EditorForm recordId={7} />);
+    enableOwnership(container, '纸质版');
     fireEvent.click(screen.getByLabelText('纸质版尺码 快捷身高码 150'));
     fireEvent.click(screen.getAllByText('保存')[0]);
     const payload = updateRecordMock.mock.calls[0][1];
     expect(payload.纸质版尺码).toEqual(['150']);
+  });
+});
+
+describe('v6 · 需求 3 形态-尺码联动', () => {
+  function chips(container: HTMLElement) {
+    const group = container.querySelector('[role="group"][aria-label="拥有形态"]')!;
+    return Array.from(group.querySelectorAll('button'));
+  }
+
+  it('只勾选「电子版」时：显示电子版尺码组、隐藏纸质版尺码', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    expect(container.textContent).toContain('电子版尺码组');
+    expect(container.textContent).not.toContain('纸质版尺码');
+    expect(container.querySelector('input[placeholder="输入纸质版尺码后回车"]')).toBeNull();
+  });
+
+  it('勾选「纸质版」后：纸质版尺码输入出现', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    fireEvent.click(chips(container)[1]);
+    expect(container.querySelector('input[placeholder="输入纸质版尺码后回车"]')).not.toBeNull();
+  });
+
+  it('取消勾选「纸质版」后：尺码输入隐藏，但已填值保留并给出提示', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    fireEvent.click(chips(container)[1]);
+    const input = screen.getByPlaceholderText('输入纸质版尺码后回车') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '165' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    // 取消勾选纸质版
+    fireEvent.click(chips(container)[1]);
+    expect(container.querySelector('input[placeholder="输入纸质版尺码后回车"]')).toBeNull();
+    const hint = container.querySelector('[data-testid="iw-kept-纸质版尺码"]');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toContain('已保留');
+  });
+
+  it('取消勾选后保存：已填尺码仍在提交内容里（不被静默清空）', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    fireEvent.click(chips(container)[1]);
+    const input = screen.getByPlaceholderText('输入纸质版尺码后回车') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '165' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.click(chips(container)[1]);
+    fireEvent.click(screen.getAllByText('保存')[0]);
+    const payload = updateRecordMock.mock.calls[0][1];
+    expect(payload.纸质版尺码).toEqual(['165']);
+    expect(payload.拥有形态).toEqual(['电子版']);
+  });
+
+  it('新建记录时形态全不选：两个尺码输入都不出现', () => {
+    const { container } = render(<EditorForm recordId={null} />);
+    expect(container.textContent).not.toContain('电子版尺码组');
+    expect(container.textContent).not.toContain('纸质版尺码');
+  });
+
+  it('新建记录勾选「电子版」后：只出现电子版尺码组', () => {
+    const { container } = render(<EditorForm recordId={null} />);
+    fireEvent.click(chips(container)[0]);
+    expect(container.textContent).toContain('电子版尺码组');
+    expect(container.textContent).not.toContain('纸质版尺码');
   });
 });
 

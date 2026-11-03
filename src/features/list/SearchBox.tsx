@@ -31,7 +31,7 @@ export function SearchBox({ value, onChange, resultCount, totalCount }: Props) {
         className="iw-input"
         type="search"
         value={draft}
-        placeholder="搜索名称、品牌、备注…"
+        placeholder="搜索名称、品牌、备注、编号…"
         aria-label="全文搜索"
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Escape') { setDraft(''); onChange(''); } }}

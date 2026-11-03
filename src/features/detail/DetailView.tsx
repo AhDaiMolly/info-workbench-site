@@ -57,8 +57,11 @@ export function DetailView({ id }: { id: number | null }) {
     const value = field.type === 'datetime'
       ? <span>{formatTime(String(raw ?? ''))}</span>
       : renderValue(field.jsonKey);
+    // v6（需求 2）：备注改为整行块布局 —— 旧版把长文本塞在标签右侧的半宽窄列里，
+    // pre-wrap 换行被挤成锯齿状；现在标签占一行、正文独占整行宽度。
+    const isNote = field.jsonKey === '备注';
     return (
-      <div className="iw-kv" key={field.key}>
+      <div className={`iw-kv${isNote ? ' iw-kv-note' : ''}`} key={field.key}>
         <span className="iw-kv-key">{field.label}</span>
         <span className="iw-kv-val">{value}</span>
       </div>

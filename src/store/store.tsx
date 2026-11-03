@@ -259,7 +259,7 @@ function initState(): AppState {
     indexes: buildIndexes(rawRecords),
     filters: { ...EMPTY_FILTERS },
     query: '',
-    sort: prefs.sort ?? { key: '更新时间', dir: 'desc' },
+    sort: prefs.sort ?? { key: '名称', dir: 'asc' },
     visibleColumns: prefs.columns && prefs.columns.length ? prefs.columns : [],
     page: 1,
     pageSize: prefs.pageSize ?? 50,

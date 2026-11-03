@@ -227,3 +227,61 @@ describe('高亮', () => {
     expect(highlightParts('abc', '')).toEqual([{ text: 'abc', hit: false }]);
   });
 });
+
+
+/* ------------------------------------------------------------------
+ * v6 新增用例：需求 4（拼音排序）与需求 5（编号搜索）
+ * ------------------------------------------------------------------ */
+describe('v6 · 需求 4 默认按名称拼音升序', () => {
+  // 码位序与拼音序不一致的样本：码位序 北<安<广<成<杭；拼音序 安<北<成<广<杭
+  const pyRecords: RecordItem[] = [
+    makeRecord({ id: 11, 名称: '北风外套' }),
+    makeRecord({ id: 12, 名称: '安拉链' }),
+    makeRecord({ id: 13, 名称: '广州衬衫' }),
+    makeRecord({ id: 14, 名称: '成风长裤' }),
+    makeRecord({ id: 15, 名称: '杭州卫衣' }),
+  ];
+
+  it('按名称升序时中文按拼音排序（不是按 Unicode 码位）', () => {
+    const sorted = sortRecords(pyRecords, { key: '名称', dir: 'asc' });
+    expect(sorted.map((r) => r.名称)).toEqual(['安拉链', '北风外套', '成风长裤', '广州衬衫', '杭州卫衣']);
+    expect(sorted.map((r) => r.id)).toEqual([12, 11, 14, 13, 15]);
+  });
+
+  it('名称降序时拼音序反转', () => {
+    const sorted = sortRecords(pyRecords, { key: '名称', dir: 'desc' });
+    expect(sorted.map((r) => r.名称)).toEqual(['杭州卫衣', '广州衬衫', '成风长裤', '北风外套', '安拉链']);
+  });
+});
+
+describe('v6 · 需求 5 搜索支持编号', () => {
+  it('纯数字查询命中对应编号的记录', () => {
+    expect(searchIds(sample, '3')).toEqual([3]);
+    expect(searchIds(sample, '2')).toEqual([2]);
+  });
+
+  it('「#编号」写法同样命中', () => {
+    expect(searchIds(sample, '#3')).toEqual([3]);
+    expect(searchIds(sample, '#1')).toEqual([1]);
+  });
+
+  it('不存在的编号查不到', () => {
+    expect(searchIds(sample, '#99')).toEqual([]);
+    expect(searchIds(sample, '99')).toEqual([]);
+  });
+
+  it('不会因编号拼接产生误命中（#3 不应命中「33」）', () => {
+    expect(searchIds(sample, '33')).toEqual([]);
+    expect(searchIds(sample, '#33')).toEqual([]);
+  });
+
+  it('编号与名称混合查询可叠加', () => {
+    expect(searchIds(sample, '外套 2')).toEqual([2]);
+    expect(searchIds(sample, '外套 3')).toEqual([]);
+  });
+
+  it('applyQuery 走编号筛选同样生效', () => {
+    const hits = applyQuery(sample, EMPTY_FILTERS, '#2');
+    expect(hits.map((r) => r.id)).toEqual([2]);
+  });
+});

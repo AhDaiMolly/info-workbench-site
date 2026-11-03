@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../store/store';
 import { findShellRecords } from '../../store/migrations';
+import { BUILD_INFO, buildInfoText, buildDateText } from '../../version';
 
 export function SettingsView() {
   const app = useApp();
@@ -221,6 +222,32 @@ export function SettingsView() {
               清理只删除「名称为空」的空壳记录，其余记录不受影响；清理后可在列表页点「同步」写回仓库。
             </div>
           ) : null}
+        </div>
+      </div>
+
+      {/* v6（需求 1）：底部信息区 —— 展示站点代码版本（构建时注入，见 vite.config.ts） */}
+      <div className="iw-settings-card">
+        <h2 className="iw-settings-title">版本信息</h2>
+        <div className="iw-kv-list" data-testid="iw-version-info">
+          <div className="iw-kv">
+            <span className="iw-kv-key">当前版本</span>
+            <span className="iw-kv-val" data-testid="iw-version-text">{buildInfoText()}</span>
+          </div>
+          <div className="iw-kv">
+            <span className="iw-kv-key">版本号</span>
+            <span className="iw-kv-val">{BUILD_INFO.version}</span>
+          </div>
+          <div className="iw-kv">
+            <span className="iw-kv-key">构建日期</span>
+            <span className="iw-kv-val">{buildDateText() || '—'}</span>
+          </div>
+          <div className="iw-kv">
+            <span className="iw-kv-key">提交</span>
+            <span className="iw-kv-val">{BUILD_INFO.commit || '—'}</span>
+          </div>
+        </div>
+        <div className="iw-field-hint">
+          版本号与构建信息在每次发布时自动生成。如果发现线上功能与手册描述不一致，可先核对这里的版本号是否为最新。
         </div>
       </div>
     </>

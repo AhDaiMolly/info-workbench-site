@@ -381,6 +381,11 @@
 .iw-kv-key { color: var(--iw-text-2); min-width: 88px; flex-shrink: 0; }
 .iw-kv-val { color: var(--iw-text); word-break: break-word; }
 
+/* v6（需求 2）：详情页备注整行块布局 —— 标签独占一行，正文占满整行宽度并保留换行 */
+.iw-kv.iw-kv-note { display: block; grid-column: 1 / -1; }
+.iw-kv-note .iw-kv-key { display: block; min-width: 0; margin-bottom: 2px; }
+.iw-kv-note .iw-kv-val { display: block; line-height: 1.7; white-space: pre-wrap; }
+
 /* ------------------------------- 看板 ------------------------------- */
 
 .iw-kpi-row {

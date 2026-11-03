@@ -75,8 +75,9 @@ export function parseHash(hash: string): Route {
   else if (seg[0] === 'settings') view = 'settings';
   else if (seg[0] === 'editor') { view = 'editor'; id = seg[1] && seg[1] !== 'new' ? Number(seg[1]) || null : null; }
 
-  const sortKey = (params.get('sort') || '更新时间') as SortKey;
-  const sortDir = params.get('dir') === 'asc' ? 'asc' : 'desc';
+  // v6（需求 4）：默认排序改为「名称升序」（中文按拼音）；显式带参数时以参数为准。
+  const sortKey = (params.get('sort') || '名称') as SortKey;
+  const sortDir = (params.get('dir') ?? (sortKey === '更新时间' ? 'desc' : 'asc')) === 'asc' ? 'asc' : 'desc';
 
   return {
     view,
@@ -101,8 +102,9 @@ export function buildHash(route: Partial<Route> & { view: ViewName }): string {
     else if (v === false) params.set(FILTER_PARAM[key], '0');
   }
   if (route.query) params.set('q', route.query);
-  const sort = route.sort ?? { key: '更新时间', dir: 'desc' };
-  if (sort.key !== '更新时间' || sort.dir !== 'desc') {
+  // v6（需求 4）：默认排序基线改为「名称升序」——仅与默认一致时不写入 URL 参数
+  const sort = route.sort ?? { key: '名称', dir: 'asc' };
+  if (sort.key !== '名称' || sort.dir !== 'asc') {
     params.set('sort', sort.key);
     params.set('dir', sort.dir);
   }
