@@ -152,7 +152,7 @@ export function DetailView({ id }: { id: number | null }) {
             </div>
           ) : (
             <div className="iw-cell-muted">
-              还没有计划清单。到「设置 › 计划清单」创建一份（如「2026 春季」），再回来把这条记录加进去。
+              还没有计划清单。到「设置 › 计划清单」创建一份（如「2026 春季」），新增 / 编辑表单和这里都能把这条记录加进去。
             </div>
           )}
           {app.plans.length ? (

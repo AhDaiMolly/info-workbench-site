@@ -15,8 +15,8 @@ const pkg = JSON.parse(
 ) as { version: string };
 
 describe('v6 · 需求 1 构建版本信息（v6.1）', () => {
-  it('package.json 版本号本轮已递增到 6.2.0', () => {
-    expect(pkg.version).toBe('6.2.0');
+  it('package.json 版本号本轮已递增到 6.2.1', () => {
+    expect(pkg.version).toBe('6.2.1');
   });
 
   it('BUILD_INFO 结构完整（版本 / 构建日期 / 提交）', () => {

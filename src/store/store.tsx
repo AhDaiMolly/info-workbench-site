@@ -327,7 +327,7 @@ export interface AppActions {
   setPageSize: (size: number) => void;
   savePreset: (name: string) => void;
   deletePreset: (id: string) => void;
-  addRecord: (values: Partial<RecordItem>) => number | null;
+  addRecord: (values: Partial<RecordItem>, planIds?: string[]) => number | null;
   updateRecord: (id: number, values: Partial<RecordItem>) => void;
   /** v4：删除即物理删除（无回收站） */
   deleteRecord: (id: number) => void;
@@ -450,7 +450,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'SET_ACTION_LOG', entries });
     };
 
-    const addRecord = (values: Partial<RecordItem>): number | null => {
+    const addRecord = (values: Partial<RecordItem>, planIds?: string[]): number | null => {
       const st = current();
       // v4 修复（同步阻断根因之二）：任何入口都不允许产生「名称为空」的记录。
       // 名称是必填项；为空直接拒绝创建，绝不静默落一条空壳记录。
@@ -485,6 +485,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
       dispatch({ type: 'SET_LAST_ISSUED_ID', id });
       writeLastIssuedId(id);
+      // v6.2.1（需求 2）：新增表单里勾选的计划清单随保存一并写入 —— 新记录此刻才拿到 ID，
+      // 成员关系在同一动作里落盘，绝不出现「先写记录、后补成员」的悬空窗口。
+      if (planIds && planIds.length) {
+        let plans = st.plans;
+        const affected: string[] = [];
+        for (const pid of planIds) {
+          const next = addRecordToPlan(plans, pid, id);
+          if (next !== plans) { affected.push(pid); plans = next; }
+        }
+        if (affected.length) {
+          dispatch({ type: 'SET_PLANS', plans, changes: affected.map((p) => planChange(p, '编辑')) });
+        }
+      }
       return id;
     };
 

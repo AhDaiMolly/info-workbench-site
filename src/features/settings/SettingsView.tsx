@@ -297,7 +297,7 @@ export function SettingsView() {
         <h2 className="iw-settings-title">计划清单</h2>
         <div className="iw-chip-group" data-testid="iw-plans-admin">
           {app.plans.length === 0 ? (
-            <div className="iw-field-hint">还没有计划清单。创建后可在记录详情页把记录加入清单，列表页也能按清单筛选。</div>
+            <div className="iw-field-hint">还没有计划清单。创建后可在新增/编辑表单或记录详情页把记录加入清单，列表页也能按清单筛选。</div>
           ) : (
             app.plans.map((plan) => (
               <div className="iw-plan-row" key={plan.id} data-testid="iw-plan-row">

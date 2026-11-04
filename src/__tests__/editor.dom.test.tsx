@@ -13,10 +13,12 @@ import { DEFAULT_SCHEMA } from '../schema';
 import type { RecordItem } from '../types';
 
 // vi.hoisted：mock 工厂在模块导入阶段就会执行，常量必须提前初始化
-const { navigateMock, updateRecordMock, addRecordMock } = vi.hoisted(() => ({
+const { navigateMock, updateRecordMock, addRecordMock, togglePlanMock, plansHolder } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   updateRecordMock: vi.fn(),
-  addRecordMock: vi.fn(() => 99),
+  addRecordMock: vi.fn((_values: unknown, _planIds?: string[]) => 99),
+  togglePlanMock: vi.fn(),
+  plansHolder: { plans: [] as Array<{ id: string; 名称: string; 记录ID列表: number[]; 创建时间: string; 更新时间: string }> },
 }));
 
 const sampleRecord: RecordItem = {
@@ -43,7 +45,7 @@ let records: RecordItem[] = [];
 vi.mock('../store/store', () => ({
   useApp: () => ({
     records,
-    plans: [],
+    plans: plansHolder.plans,
     schema: DEFAULT_SCHEMA,
     filters: {
       品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 计划: [],
@@ -55,7 +57,7 @@ vi.mock('../store/store', () => ({
     actions: {
       addRecord: addRecordMock,
       updateRecord: updateRecordMock,
-      toggleRecordInPlan: vi.fn(),
+      toggleRecordInPlan: togglePlanMock,
     },
   }),
 }));
@@ -72,26 +74,30 @@ import { DetailView } from '../features/detail/DetailView';
 const SECTION_TITLES = ['基础信息', '拥有形态', '状态及评价', '备注', '系统信息'];
 // v6.2（需求 1）：详情页在五分区之后额外渲染「计划清单」卡片
 const DETAIL_SECTION_TITLES = [...SECTION_TITLES, '计划清单'];
+// v6.2.1（需求 1）：新增/编辑表单在五分区之后同样追加「计划清单」分区
+const EDITOR_SECTION_TITLES = [...SECTION_TITLES, '计划清单'];
 
 beforeEach(() => {
   cleanup();
   records = [sampleRecord];
+  plansHolder.plans = [];
   navigateMock.mockClear();
   updateRecordMock.mockClear();
   addRecordMock.mockClear();
+  togglePlanMock.mockClear();
 });
 
 describe('编辑表单：五分区版面', () => {
-  it('按 基础信息 / 拥有形态 / 状态及评价 / 备注 / 系统信息 五个分区渲染', () => {
+  it('按 基础信息 / 拥有形态 / 状态及评价 / 备注 / 系统信息 五个分区渲染（v6.2.1 起追加「计划清单」）', () => {
     render(<EditorForm recordId={7} />);
     const titles = Array.from(document.querySelectorAll('.iw-detail-group-title')).map((el) => el.textContent);
-    expect(titles).toEqual(SECTION_TITLES);
+    expect(titles).toEqual(EDITOR_SECTION_TITLES);
   });
 
   it('分区标题用 section 容器承载，便于详情页与表单页对齐', () => {
     const { container } = render(<EditorForm recordId={7} />);
     const sections = container.querySelectorAll('.iw-form-section');
-    expect(sections.length).toBe(SECTION_TITLES.length);
+    expect(sections.length).toBe(EDITOR_SECTION_TITLES.length);
   });
 
   it('系统信息分区只读展示记录ID与时间，不提供可编辑控件', () => {
@@ -414,5 +420,120 @@ describe('v6.1 · 需求 2 「计划」字段表单交互', () => {
     expect(options).toEqual(['', '在计划中', '不想做', '不是现在', '未标记']);
     expect(options).not.toContain('想做');
     expect(options).not.toContain('不确定');
+  });
+});
+
+
+/* ------------------------------------------------------------------
+ * v6.2.1 新增用例：需求 1/2 —— 新增/编辑表单里的「计划清单」入口
+ * ------------------------------------------------------------------ */
+function makePlan(id: string, name: string, members: number[]) {
+  return {
+    id, 名称: name, 记录ID列表: members,
+    创建时间: '2026-11-01T00:00:00.000Z', 更新时间: '2026-11-01T00:00:00.000Z',
+  };
+}
+
+describe('v6.2.1 · 编辑表单里的计划清单（即时生效）', () => {
+  it('chip 按成员关系回显：已加入的清单 aria-pressed=true，未加入的为 false', () => {
+    plansHolder.plans = [makePlan('p1', '2026 春季', [7]), makePlan('p2', '给宝宝做的', [])];
+    const { container } = render(<EditorForm recordId={7} />);
+    const block = container.querySelector('[data-testid="iw-form-plan-block"]') as HTMLElement;
+    expect(block.textContent).toContain('计划清单');
+    const chip1 = screen.getByRole('button', { name: '计划清单：2026 春季' }) as HTMLButtonElement;
+    const chip2 = screen.getByRole('button', { name: '计划清单：给宝宝做的' }) as HTMLButtonElement;
+    expect(chip1.getAttribute('aria-pressed')).toBe('true');
+    expect(chip2.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('点击 chip 立即调用 toggleRecordInPlan(清单 ID, 记录 ID)，不经保存按钮', () => {
+    plansHolder.plans = [makePlan('p1', '2026 春季', [7]), makePlan('p2', '给宝宝做的', [])];
+    render(<EditorForm recordId={7} />);
+    fireEvent.click(screen.getByRole('button', { name: '计划清单：2026 春季' }));
+    expect(togglePlanMock).toHaveBeenCalledWith('p1', 7);
+    fireEvent.click(screen.getByRole('button', { name: '计划清单：给宝宝做的' }));
+    expect(togglePlanMock).toHaveBeenCalledWith('p2', 7);
+    // 成员关系不进记录提交载荷（记录字段与清单成员是两条独立数据线）
+    fireEvent.click(screen.getAllByText('保存')[0]);
+    expect(updateRecordMock).toHaveBeenCalledTimes(1);
+    expect(Object.keys(updateRecordMock.mock.calls[0][1])).not.toContain('计划清单');
+  });
+
+  it('清单为空时给出引导与设置页跳转入口', () => {
+    plansHolder.plans = [];
+    const { container } = render(<EditorForm recordId={7} />);
+    const block = container.querySelector('[data-testid="iw-form-plan-block"]') as HTMLElement;
+    expect(block.textContent).toContain('还没有计划清单');
+    fireEvent.click(screen.getByTestId('iw-form-plan-goto-settings'));
+    expect(navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'settings' }));
+  });
+
+  it('设置页重命名清单后，表单 chip 展示新名称（同一 store 事实源）', () => {
+    plansHolder.plans = [makePlan('p1', '2026 春季', [7])];
+    const { rerender } = render(<EditorForm recordId={7} />);
+    expect(screen.getByRole('button', { name: '计划清单：2026 春季' })).toBeTruthy();
+    plansHolder.plans = [makePlan('p1', '2026 春夏', [7])];
+    rerender(<EditorForm recordId={7} />);
+    expect(screen.getByRole('button', { name: '计划清单：2026 春夏' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '计划清单：2026 春季' })).toBeNull();
+  });
+});
+
+describe('v6.2.1 · 新增表单里的计划清单（保存后一并写入）', () => {
+  it('勾选 chip 只是本地草稿（不动 store），保存时把清单 ID 随 addRecord 提交', () => {
+    plansHolder.plans = [makePlan('p1', '2026 春季', []), makePlan('p2', '给宝宝做的', [])];
+    const { container } = render(<EditorForm recordId={null} />);
+    const chip1 = screen.getByRole('button', { name: '计划清单：2026 春季' }) as HTMLButtonElement;
+    expect(chip1.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(chip1);
+    expect(chip1.getAttribute('aria-pressed')).toBe('true');
+    // 草稿阶段不触发 store 动作（新记录还没有 ID，绝不产生悬空成员引用）
+    expect(togglePlanMock).not.toHaveBeenCalled();
+
+    // 名称 label 带必填星号，直接用字段 id 定位；品牌（必填、allowNew）用自定义输入框
+    const nameInput = document.querySelector('#fld-名称') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: '新记录晨雾' } });
+    fireEvent.change(screen.getByPlaceholderText('输入新的品牌'), { target: { value: '品牌甲' } });
+    fireEvent.click(screen.getAllByText('保存')[0]);
+    expect(addRecordMock).toHaveBeenCalledTimes(1);
+    const [payload, planIds] = addRecordMock.mock.calls[0] as [Partial<RecordItem>, string[] | undefined];
+    expect(payload.名称).toBe('新记录晨雾');
+    expect(planIds).toEqual(['p1']);
+    expect(navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'detail', id: 99 }));
+    void container;
+  });
+
+  it('勾选后又取消 → 保存时不携带该清单；一个都不勾 → 传空数组', () => {
+    plansHolder.plans = [makePlan('p1', '2026 春季', [])];
+    render(<EditorForm recordId={null} />);
+    const chip1 = screen.getByRole('button', { name: '计划清单：2026 春季' });
+    fireEvent.click(chip1);
+    fireEvent.click(chip1);
+    const nameInput = document.querySelector('#fld-名称') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: '新记录晨雾' } });
+    fireEvent.change(screen.getByPlaceholderText('输入新的品牌'), { target: { value: '品牌甲' } });
+    fireEvent.click(screen.getAllByText('保存')[0]);
+    expect(addRecordMock.mock.calls[0][1]).toEqual([]);
+  });
+
+  it('清单为空时同样给出引导与跳转入口', () => {
+    plansHolder.plans = [];
+    render(<EditorForm recordId={null} />);
+    const block = document.querySelector('[data-testid="iw-form-plan-block"]') as HTMLElement;
+    expect(block.textContent).toContain('还没有计划清单');
+    fireEvent.click(screen.getByTestId('iw-form-plan-goto-settings'));
+    expect(navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'settings' }));
+  });
+
+  it('表单与详情页共用同一 store 事实源：同一份 plans 两处回显一致', () => {
+    plansHolder.plans = [makePlan('p1', '2026 春季', [7])];
+    render(<EditorForm recordId={7} />);
+    const formChip = screen.getByRole('button', { name: '计划清单：2026 春季' }) as HTMLButtonElement;
+    expect(formChip.getAttribute('aria-pressed')).toBe('true');
+    cleanup();
+    render(<DetailView id={7} />);
+    const detailChip = screen.getByRole('button', { name: '计划清单：2026 春季' }) as HTMLButtonElement;
+    expect(detailChip.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('iw-plan-card').textContent).toContain('当前共在 1 份清单里');
   });
 });

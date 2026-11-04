@@ -28,6 +28,9 @@ const path = require('node:path');
 const PUPPETEER_PATH = process.env.PUPPETEER_PATH || '/home/gem/.aily/.cli/npm/node_modules/puppeteer-core';
 const puppeteer = require(PUPPETEER_PATH);
 
+// v6-1 断言锚定当前版本号：从 package.json 读取，避免每轮发版都要改冒烟脚本
+const PKG_VERSION = require('../package.json').version;
+
 const DIST = path.resolve(__dirname, '../dist');
 const DATA_DIR = path.resolve(__dirname, '../../data/migration-v61');
 const RECORDS_FILE = 'records.v61.json';
@@ -130,6 +133,18 @@ function apiPayload(name, buf) {
           putCount += 1;
           try { putBodies.push(req.postData() || ''); putUrls.push(url); } catch (e) { putBodies.push(''); putUrls.push(url); }
           apiHits.push(`PUT ${url.replace(/https:\/\/api\.github\.com/, '')}`);
+          // v6.2.1 修复：PUT 之后让后续 GET 返回刚写入的内容（贴近真实仓库）。
+          // 此前 GET 永远返回最初的 fixture —— v6.2.1 新增用例里 goto() 内含 reload 触发自动拉取，
+          // 合并逻辑把本地清单按「远端已删除」误清空，导致表单读到的 plans 为空。
+          try {
+            const putBody = JSON.parse(req.postData() || '{}');
+            if (typeof putBody.content === 'string' && putBody.content) {
+              const written = Buffer.from(putBody.content, 'base64');
+              if (url.includes('plans.json')) servedPlans = written;
+              else if (url.includes('records.json')) servedRecords = written;
+              else if (url.includes('schema.json')) servedSchema = written;
+            }
+          } catch (e) { /* 忽略无法解析的 PUT 体，不影响响应 */ }
           return req.respond({
             status: 200,
             headers: CORS_HEADERS,
@@ -565,7 +580,7 @@ function apiPayload(name, buf) {
       };
     });
     record('v6-1 设置页展示「版本信息」卡片（版本号/构建日期/提交）',
-      verInfo.hasCard && verInfo.bodyHasFields && verInfo.text.includes('v6.2.0'),
+      verInfo.hasCard && verInfo.bodyHasFields && verInfo.text.includes('v' + PKG_VERSION),
       verInfo.hasCard ? `版本文本：${verInfo.text}` : '未找到版本信息卡片');
 
     // 样本：仅勾选「电子版」且有备注的记录（从当前数据里挑）
@@ -1069,6 +1084,122 @@ function apiPayload(name, buf) {
     } else {
       record('v6.2-7 编辑页身高码（表单分区存在）', false, '编辑页分区缺失');
     }
+
+    /* ---------------- v6.2.1 表单里的计划清单入口（浏览器逐项验证） ---------------- */
+    // 需求 1/2：新增表单勾选清单 → 保存后成员写入 → 按清单筛选命中；
+    //           编辑表单取消勾选 → 即时生效 → 筛选不再命中。此时「2026 春季」已有 1 名成员（v6.2-3 加入的 joinTarget）。
+    await goto('#/editor/new');
+    const formPlanInfo = await page.evaluate(() => {
+      const block = document.querySelector('[data-testid="iw-form-plan-block"]');
+      if (!block) return null;
+      const chips = Array.from(block.querySelectorAll('[data-testid="iw-form-plan-chips"] button'))
+        .map((b) => ({ label: b.getAttribute('aria-label') || '', pressed: b.getAttribute('aria-pressed') }));
+      return { chips, text: block.textContent || '' };
+    });
+    record('v6.2.1-1 新增表单有「计划清单」分区且列出当前清单（2026 春季未选中）',
+      !!formPlanInfo && formPlanInfo.chips.some((c) => c.label.includes('计划清单：2026 春季') && c.pressed === 'false'),
+      formPlanInfo ? `chips：${formPlanInfo.chips.map((c) => `${c.label.slice(5)}=${c.pressed}`).join('、')}` : '未找到计划清单分区');
+
+    await page.focus('#fld-名称');
+    await page.keyboard.type('冒烟v621新记录');
+    // 品牌为枚举字段：既有校验要求只能从已有选项中选择（手输新品牌会被拦），
+    // 因此这里从下拉里选一个真实存在的品牌，而不是手输新值。
+    await page.select('select[aria-label="品牌"]', '卫兰');
+    await new Promise((r) => setTimeout(r, 300));
+    // 勾选清单（草稿态：不触发 store，仅本地选中）
+    const draftTicked = await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('[data-testid="iw-form-plan-chips"] button'))
+        .find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+      if (!btn) return false;
+      btn.click();
+      return true;
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    const draftPressed = await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('[data-testid="iw-form-plan-chips"] button'))
+        .find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+      return btn ? btn.getAttribute('aria-pressed') : 'missing';
+    });
+    await clickByText('保存', '.iw-main');
+    await new Promise((r) => setTimeout(r, 1000));
+    const newRecordId = Number(await page.evaluate(() => {
+      const m = (location.hash || '').match(/#\/detail\/(\d+)/);
+      return m ? m[1] : '';
+    }));
+    const detailAfterCreate = await page.evaluate(() => {
+      const card = document.querySelector('[data-testid="iw-plan-card"]');
+      const chip = Array.from(document.querySelectorAll('[data-testid="iw-plan-chips"] button'))
+        .find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+      return {
+        cardText: card ? card.textContent || '' : '',
+        pressed: chip ? chip.getAttribute('aria-pressed') : 'missing',
+      };
+    });
+    record('v6.2.1-2 新增表单勾选清单 → 保存后成员写入（详情页 chip 选中、共在 1 份清单）',
+      draftTicked && draftPressed === 'true' && newRecordId > 0
+      && detailAfterCreate.pressed === 'true' && detailAfterCreate.cardText.includes('当前共在 1 份清单里'),
+      `新记录 #${newRecordId || '?'}，草稿勾选=${draftPressed}，详情 chip=${detailAfterCreate.pressed}`);
+
+    // 按该清单筛选：应命中 2 行（v6.2-3 的 joinTarget + 新记录）
+    await goto('#/list');
+    await clickByText('筛选条件');
+    await new Promise((r) => setTimeout(r, 500));
+    await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('.iw-filter-panel button'))
+        .find((b) => (b.getAttribute('aria-label') || '').includes('计划清单：2026 春季'));
+      if (btn) btn.click();
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    const filteredNew = await page.evaluate(() => document.querySelectorAll('.iw-table tbody tr').length);
+    record('v6.2.1-3 新增记录后按清单筛选命中（该清单共 2 名成员）', filteredNew === 2,
+      `筛选后行数 ${filteredNew}（期望 2：原成员 + 新记录）`);
+
+    // 编辑表单取消勾选 → 即时生效（不经保存按钮）→ 筛选不再命中新记录
+    await goto(`#/editor/${newRecordId}`);
+    await new Promise((r) => setTimeout(r, 600));
+    const editPressedBefore = await page.evaluate((rid) => {
+      const btn = Array.from(document.querySelectorAll('[data-testid="iw-form-plan-chips"] button'))
+        .find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+      void rid;
+      return btn ? btn.getAttribute('aria-pressed') : 'missing';
+    }, newRecordId);
+    const untick = await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('[data-testid="iw-form-plan-chips"] button'))
+        .find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+      if (!btn) return false;
+      btn.click();
+      return true;
+    });
+    await new Promise((r) => setTimeout(r, 800));
+    const editPressedAfter = await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('[data-testid="iw-form-plan-chips"] button'))
+        .find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+      return btn ? btn.getAttribute('aria-pressed') : 'missing';
+    });
+    // 去详情页核对同一事实源：取消勾选后详情页 chip 也为未选中
+    await goto(`#/detail/${newRecordId}`);
+    await new Promise((r) => setTimeout(r, 600));
+    const detailAfterUntick = await page.evaluate(() => {
+      const chip = Array.from(document.querySelectorAll('[data-testid="iw-plan-chips"] button'))
+        .find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+      return chip ? chip.getAttribute('aria-pressed') : 'missing';
+    });
+    await goto('#/list');
+    await clickByText('筛选条件');
+    await new Promise((r) => setTimeout(r, 500));
+    await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('.iw-filter-panel button'))
+        .find((b) => (b.getAttribute('aria-label') || '').includes('计划清单：2026 春季'));
+      if (btn) btn.click();
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    const filteredAfterUntick = await page.evaluate(() => document.querySelectorAll('.iw-table tbody tr').length);
+    record('v6.2.1-4 编辑表单取消勾选即时生效（筛选不再命中新记录）',
+      editPressedBefore === 'true' && untick && editPressedAfter === 'false'
+      && detailAfterUntick === 'false' && filteredAfterUntick === 1,
+      `编辑前=${editPressedBefore}→编辑后=${editPressedAfter}，详情页=${detailAfterUntick}，筛选行数=${filteredAfterUntick}（期望 1）`);
+    // 清掉筛选，避免影响后续断言
+    await goto('#/list');
 
     /* ---------------- 阶段 B：第 1 条修复后的写回校验行为 ---------------- */
     const v4File = JSON.parse(recordsBuf.toString('utf8'));
