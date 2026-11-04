@@ -118,27 +118,6 @@ export function DashboardView() {
     };
   }, [stats]);
 
-  const completionOption = useMemo<echarts.EChartsCoreOption>(() => {
-    const order = ['在计划中', '不是现在', '不想做', '未标记'];
-    const map = new Map(stats.completion.map((c) => [c.name, c.value]));
-    const data = order.map((name) => ({ name, value: map.get(name) ?? 0 }));
-    return {
-      grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      xAxis: { type: 'value', axisLabel: { color: AXIS_COLOR }, splitLine: { lineStyle: { color: '#f0f1f3' } } },
-      yAxis: { type: 'category', data: [...order].reverse(), axisLabel: { color: AXIS_COLOR }, axisTick: { show: false } },
-      series: [{
-        type: 'bar',
-        data: [...data].reverse().map((d, i) => ({
-          value: d.value,
-          itemStyle: { color: [ '#d4d7dd', '#fcd34d', '#fda4af', PRIMARY ][i], borderRadius: [0, 3, 3, 0] },
-        })),
-        barMaxWidth: 18,
-        label: { show: true, position: 'right', color: AXIS_COLOR, fontSize: 11 },
-      }],
-    };
-  }, [stats]);
-
   // v4：移除「有教程」统计口径（KPI 卡片与相关口径一并清理）
   const kpis = [
     { label: '总记录', value: stats.total, note: '当前筛选范围内' },
@@ -211,16 +190,6 @@ export function DashboardView() {
             <div className="iw-chart-note">皆无 / 仅电子 / 仅纸质 / 双有</div>
           </div>
           <Chart option={ownershipOption} />
-        </div>
-
-        <div className="iw-chart-card">
-          <div className="iw-chart-card-head">
-            <div className="iw-chart-title">完成与计划</div>
-            <div className="iw-chart-note">
-              在计划中 / 不是现在 / 不想做 / 未标记；其中已「做过」{stats.做过} 条
-            </div>
-          </div>
-          <Chart option={completionOption} />
         </div>
       </div>
     </>

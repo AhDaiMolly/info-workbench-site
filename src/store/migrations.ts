@@ -490,7 +490,8 @@ export function validateRecords(records: RecordItem[], schema: Schema): Validati
         }
       }
 
-      if (f.type === 'enum' && value !== '' && value !== undefined && value !== null) {
+      // allowNew 枚举（品牌/款式）允许自由输入新值，不做选项集校验
+      if (f.type === 'enum' && !f.allowNew && value !== '' && value !== undefined && value !== null) {
         const opts = f.options ?? [];
         if (opts.length && !opts.includes(String(value))) {
           issues.push({ 记录ID: r.id, 字段: f.label, 问题: `取值「${String(value)}」不在选项集内` });

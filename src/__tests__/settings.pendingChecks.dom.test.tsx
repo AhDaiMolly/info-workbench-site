@@ -36,6 +36,9 @@ vi.mock('../store/store', () => ({
     pending: [],
     actionLog: [],
     backupIntervalDays: 7,
+    // v6.3（需求 2）：字段选项管理卡片依赖
+    optionCandidates: {},
+    options: {},
     conflicts: [
       {
         key: '勾选与信息矛盾|电子版尺码|378',
@@ -61,6 +64,8 @@ vi.mock('../store/store', () => ({
       restoreAllIgnoredChecks: holder.restoreAllIgnoredChecks,
       createPlanList: vi.fn(() => 'p1'),
       renamePlanList: vi.fn(),
+      removeFieldOption: vi.fn(),
+      restoreFieldOption: vi.fn(),
       deletePlanList: vi.fn(),
       toggleRecordInPlan: vi.fn(),
     },

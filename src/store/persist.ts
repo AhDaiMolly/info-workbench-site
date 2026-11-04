@@ -12,11 +12,12 @@
  *   iw.maxid    记录 ID 发号水位（v4：保证删除记录后 ID 不复用）
  *   iw.ignoredChecks 已忽略的待确认项（v6.1.1：单人使用，只存浏览器本地）
  *   iw.plansBaseline 上次成功同步时的计划清单快照 —— plans.json 三方合并的基线（v6.2）
+ *   iw.optionsBaseline 上次成功同步时的字段选项管理状态快照 —— options.json 三方合并的基线（v6.3）
  *
  * ⚠️ 令牌永不写入 URL / 日志 / commit message / 导出文件 / 构建产物。
  */
 
-import type { ActionLogEntry, FilterPreset, Filters, PlanItem, RecordItem, RepoConfig, Schema, SortSpec } from '../types';
+import type { ActionLogEntry, FieldOptionsState, FilterPreset, Filters, PlanItem, RecordItem, RepoConfig, Schema, SortSpec } from '../types';
 import type { IgnoredCheckEntry } from './pendingChecks';
 import { LEGACY_FIELD_ALIAS, REMOVED_FIELD_KEYS } from '../schema';
 
@@ -33,6 +34,8 @@ export const STORAGE_KEYS = {
   ignoredChecks: 'iw.ignoredChecks',
   /** v6.2：计划清单的同步基线快照（plans.json 三方合并基线） */
   plansBaseline: 'iw.plansBaseline',
+  /** v6.3：字段选项管理的同步基线快照（options.json 三方合并基线） */
+  optionsBaseline: 'iw.optionsBaseline',
 } as const;
 
 /** v4：操作日志最多保留的条数 */
@@ -158,6 +161,12 @@ export interface CachedData {
   plansBaseSha?: string | null;
   /** v6.2：plans.json 的数据版本 */
   plansDataVersion?: number;
+  /** v6.3：字段选项管理状态本地缓存（无则视为空） */
+  options?: FieldOptionsState | null;
+  /** v6.3：options.json 的远端 sha（null = 远端尚无该文件） */
+  optionsBaseSha?: string | null;
+  /** v6.3：options.json 的数据版本 */
+  optionsDataVersion?: number;
 }
 
 export function readCache(): CachedData | null {
@@ -208,6 +217,25 @@ export function writePlansBaseline(plans: PlanItem[]): WriteOutcome {
 
 export function clearPlansBaseline(): void {
   removeKey(STORAGE_KEYS.plansBaseline, safeStorage('local'));
+}
+
+/* ------------------- 字段选项管理同步基线（v6.3） ------------------- */
+
+/**
+ * 上次成功同步（拉取或写回）时的字段选项管理状态快照 —— options.json 三方合并的基线。
+ * 与记录 / 计划清单基线同一模式；空对象也是合法基线，只有 null 才触发队列重建。
+ */
+export function readOptionsBaseline(): FieldOptionsState | null {
+  const raw = readJson<FieldOptionsState>(STORAGE_KEYS.optionsBaseline, safeStorage('local'));
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+}
+
+export function writeOptionsBaseline(state: FieldOptionsState): WriteOutcome {
+  return writeJson(STORAGE_KEYS.optionsBaseline, state, safeStorage('local'));
+}
+
+export function clearOptionsBaseline(): void {
+  removeKey(STORAGE_KEYS.optionsBaseline, safeStorage('local'));
 }
 
 /* ------------------------------ 待同步队列 ------------------------------ */

@@ -2,7 +2,7 @@
  * v6 · 需求 1：站点版本信息（构建时注入）（v6.1 版本号递增）
  *
  * 断言口径：
- *   · package.json 是版本号唯一事实源，本轮已递增到 6.1.1
+ *   · package.json 是版本号唯一事实源（断言动态化，发版无需改测试）
  *   · version.ts 在构建注入缺失时必须安全回落（本地源码态），不能抛错
  */
 
@@ -15,8 +15,10 @@ const pkg = JSON.parse(
 ) as { version: string };
 
 describe('v6 · 需求 1 构建版本信息（v6.1）', () => {
-  it('package.json 版本号本轮已递增到 6.2.1', () => {
-    expect(pkg.version).toBe('6.2.1');
+  it('package.json 版本号与本轮发布版本一致（动态断言，发版不必改测试）', () => {
+    // 版本号唯一事实源是 package.json；这里断言它满足「主.次.修订」三段式且与 v6 系列一致
+    expect(pkg.version).toMatch(/^6\.\d+\.\d+$/);
+    expect(BUILD_INFO.version === pkg.version || BUILD_INFO.version === '0.0.0-local').toBe(true);
   });
 
   it('BUILD_INFO 结构完整（版本 / 构建日期 / 提交）', () => {

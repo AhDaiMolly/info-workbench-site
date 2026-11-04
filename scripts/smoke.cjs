@@ -2,6 +2,12 @@
 /**
  * 信息汇总工作台 v4 · 真机冒烟测试（headless Chromium + puppeteer-core）
  *
+ * v6.3 新增/变更覆盖：
+ *   · 看板移除「完成与计划」统计区块（其余卡片与布局不动）
+ *   · 品牌 / 款式支持手动输入新值并保存，新值自动沉淀为下次录入的候选
+ *   · 设置页「字段选项管理」可删除候选（在用值给出提示但仍允许删除），历史记录取值不受影响
+ *   · 字段选项随同步写回数据仓 options.json
+ *
  * v4 新增/变更覆盖：
  *   · 列表页不再有「导出 JSON」「导出 Excel」按钮（导出移到设置 › 数据管理）
  *   · 设置页无「安全须知」，有「同步和备份」区 + 「操作日志（最近 3 条）」区 + 导出入口
@@ -35,6 +41,8 @@ const DIST = path.resolve(__dirname, '../dist');
 const DATA_DIR = path.resolve(__dirname, '../../data/migration-v61');
 const RECORDS_FILE = 'records.v61.json';
 const SCHEMA_FILE = 'schema.v61.json';
+// v6.3：字段选项文件（数据仓 data/options.json）
+const OPTIONS_FILE = 'options.v63.json';
 const PORT = Number(process.env.SMOKE_PORT || 4178);
 const MOCK_SHA = '0'.repeat(40);
 
@@ -94,6 +102,7 @@ function apiPayload(name, buf) {
   const recordsBuf = fs.readFileSync(path.join(DATA_DIR, RECORDS_FILE));
   const schemaBuf = fs.readFileSync(path.join(DATA_DIR, SCHEMA_FILE));
   const plansBuf = fs.readFileSync(path.join(DATA_DIR, 'plans.v62.json'));
+  const optionsBuf = fs.readFileSync(path.join(DATA_DIR, OPTIONS_FILE));
   // 全部记录：断言一律锚定到当前数据，避免线上数据演进后出现假失败
   const allFile = JSON.parse(recordsBuf.toString('utf8'));
   // 与产品代码 src/store/selectors.ts 的排序比较器保持一致
@@ -103,6 +112,7 @@ function apiPayload(name, buf) {
   let servedRecords = recordsBuf;
   let servedSchema = schemaBuf;
   let servedPlans = plansBuf;
+  let servedOptions = optionsBuf;
   let putCount = 0;
   const putBodies = [];
   const putUrls = [];
@@ -141,6 +151,7 @@ function apiPayload(name, buf) {
             if (typeof putBody.content === 'string' && putBody.content) {
               const written = Buffer.from(putBody.content, 'base64');
               if (url.includes('plans.json')) servedPlans = written;
+              else if (url.includes('options.json')) servedOptions = written;
               else if (url.includes('records.json')) servedRecords = written;
               else if (url.includes('schema.json')) servedSchema = written;
             }
@@ -163,6 +174,11 @@ function apiPayload(name, buf) {
         if (url.includes('plans.json')) {
           apiHits.push(`GET ${url.replace(/https:\/\/api\.github\.com/, '')}`);
           return req.respond({ status: 200, headers: CORS_HEADERS, contentType: 'application/json', body: apiPayload('plans.json', servedPlans) });
+        }
+        // v6.3：字段选项文件
+        if (url.includes('options.json')) {
+          apiHits.push(`GET ${url.replace(/https:\/\/api\.github\.com/, '')}`);
+          return req.respond({ status: 200, headers: CORS_HEADERS, contentType: 'application/json', body: apiPayload('options.json', servedOptions) });
         }
         // 仓库元信息（连通性检测）—— 返 200，避免浏览器把 404 记成控制台错误
         apiHits.push(`GET ${url.replace(/https:\/\/api\.github\.com/, '')}`);
@@ -539,6 +555,13 @@ function apiPayload(name, buf) {
     const dashText = await bodyText();
     record('v4 看板整体不出现「有教程」口径', !dashText.includes('有教程'),
       dashText.includes('有教程') ? '页面仍出现「有教程」' : '未出现');
+
+    // v6.3 需求 1：看板移除「完成与计划」统计区块，其余卡片不动
+    const dashChartTitles = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-chart-title')).map((n) => (n.textContent || '').trim()));
+    const dashCardCount = await page.evaluate(() => document.querySelectorAll('.iw-chart-card').length);
+    record('v6.3 看板已移除「完成与计划」区块（其余图表卡片保留）',
+      !dashChartTitles.includes('完成与计划') && !dashText.includes('完成与计划'),
+      dashChartTitles.length ? `图表卡片 ${dashCardCount} 个：${dashChartTitles.join('、')}` : '未取到图表标题');
 
     /* 6. 设置页（v4 第 5 / 6 条 + 导出入口 + 数据体检） */
     await goto('/settings');
@@ -1201,6 +1224,115 @@ function apiPayload(name, buf) {
     // 清掉筛选，避免影响后续断言
     await goto('#/list');
 
+    /* ---------------- v6.3 需求 2：品牌自由输入 → 沉淀 → 删除（浏览器逐项验证） ---------------- */
+    // 手动输入新品牌 → 保存成功 → 重新打开表单候选里出现 → 设置页删除候选 → 历史记录取值不变 → 同步写回 options.json
+    const NEW_BRAND = '冒烟新品牌';
+    await goto('#/editor/new');
+    await page.focus('#fld-名称');
+    await page.keyboard.type('冒烟v630新记录');
+    // 品牌下拉切到「＋ 其他（手动输入）」→ 出现自由输入框
+    await page.select('select[aria-label="品牌"]', '__custom__');
+    await new Promise((r) => setTimeout(r, 400));
+    const brandInput = await page.$('input[placeholder="输入新的品牌"]');
+    let brandTyped = false;
+    if (brandInput) {
+      await brandInput.click();
+      await brandInput.type(NEW_BRAND);
+      brandTyped = true;
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    await clickByText('保存', '.iw-main');
+    await new Promise((r) => setTimeout(r, 1200));
+    const v63NewId = Number(await page.evaluate(() => {
+      const m = (location.hash || '').match(/#\/detail\/(\d+)/);
+      return m ? m[1] : '';
+    }));
+    const v63DetailText = await bodyText();
+    record('v6.3-1 手动输入新品牌保存成功（不再被「只能从已有选项中选择」拦下）',
+      brandTyped && v63NewId > 0 && v63DetailText.includes(NEW_BRAND)
+        && !v63DetailText.includes('只能从已有选项中选择'),
+      `新记录 #${v63NewId || '?'}，详情页含「${NEW_BRAND}」=${v63DetailText.includes(NEW_BRAND)}`);
+
+    // 重新打开新增表单：新值已沉淀为候选
+    await goto('#/editor/new');
+    await new Promise((r) => setTimeout(r, 500));
+    const brandCandidates = await page.evaluate(() => {
+      const sel = document.querySelector('select[aria-label="品牌"]');
+      if (!sel) return [];
+      return Array.from(sel.options).map((o) => o.value);
+    });
+    record('v6.3-2 新输入的品牌沉淀为下次录入的候选（刷新后仍在）',
+      brandCandidates.includes(NEW_BRAND),
+      `候选共 ${brandCandidates.length} 项，含「${NEW_BRAND}」=${brandCandidates.includes(NEW_BRAND)}`);
+
+    // 设置页删除该候选：先看提示（说明在用记录数），确认后删除
+    await goto('#/settings');
+    await new Promise((r) => setTimeout(r, 600));
+    const optDeleteClicked = await page.evaluate((val) => {
+      const btn = Array.from(document.querySelectorAll('[data-testid="iw-options-admin"] button'))
+        .find((b) => (b.getAttribute('aria-label') || '') === `删除选项：${val}`);
+      if (!btn) return false;
+      btn.click();
+      return true;
+    }, NEW_BRAND);
+    await new Promise((r) => setTimeout(r, 400));
+    const optModalHint = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="iw-delete-option-hint"]');
+      return el ? (el.textContent || '') : '';
+    });
+    const optConfirmClicked = await page.evaluate(() => {
+      const dlg = document.querySelector('[role="dialog"]');
+      if (!dlg) return false;
+      const btn = Array.from(dlg.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '删除');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    record('v6.3-3 删除候选时提示在用记录数（提示后仍允许删除）',
+      optDeleteClicked && optConfirmClicked && optModalHint.includes('条记录正在使用这个值')
+        && optModalHint.includes('历史记录仍保留原值'),
+      `提示：${optModalHint.replace(/\s+/g, ' ').trim().slice(0, 90)}`);
+
+    // 删除后候选里不再有该值；历史记录详情页取值不变
+    await goto('#/editor/new');
+    await new Promise((r) => setTimeout(r, 500));
+    const brandCandidatesAfter = await page.evaluate(() => {
+      const sel = document.querySelector('select[aria-label="品牌"]');
+      if (!sel) return [];
+      return Array.from(sel.options).map((o) => o.value);
+    });
+    await goto(`#/detail/${v63NewId}`);
+    await new Promise((r) => setTimeout(r, 600));
+    const v63DetailAfterDelete = await bodyText();
+    record('v6.3-4 删除后该值不再出现在录入候选里', !brandCandidatesAfter.includes(NEW_BRAND),
+      `候选含「${NEW_BRAND}」=${brandCandidatesAfter.includes(NEW_BRAND)}`);
+    record('v6.3-5 删除候选后历史记录取值不受影响（详情页仍显示原值）',
+      v63NewId > 0 && v63DetailAfterDelete.includes(NEW_BRAND),
+      `#${v63NewId || '?'} 详情页仍含「${NEW_BRAND}」=${v63DetailAfterDelete.includes(NEW_BRAND)}`);
+
+    // 同步写回 options.json（PUT 拦截）
+    await goto('#/settings');
+    await new Promise((r) => setTimeout(r, 400));
+    const putBeforeOptions = putCount;
+    await clickByText('同步到 GitHub', '.iw-main');
+    await waitFor(async () => putCount > putBeforeOptions, 12000);
+    let optionsPutOk = false;
+    let optionsPutMsg = '未捕获 options.json PUT';
+    for (let i = 0; i < putUrls.length; i += 1) {
+      if (!putUrls[i].includes('options.json')) continue;
+      try {
+        const body = JSON.parse(putBodies[i] || '{}');
+        const decoded = JSON.parse(Buffer.from(body.content || '', 'base64').toString('utf8'));
+        const brandField = decoded.fields && decoded.fields['品牌'];
+        if (brandField && (brandField.removed || []).includes(NEW_BRAND)) {
+          optionsPutOk = true;
+          optionsPutMsg = `写回 options.json dataVersion=${decoded.dataVersion}，品牌 removed 含「${NEW_BRAND}」`;
+        }
+      } catch (e) { /* skip */ }
+    }
+    record('v6.3-6 字段选项随同步写回数据仓（PUT options.json）', optionsPutOk, optionsPutMsg);
+
     /* ---------------- 阶段 B：第 1 条修复后的写回校验行为 ---------------- */
     const v4File = JSON.parse(recordsBuf.toString('utf8'));
     const schemaObj = JSON.parse(schemaBuf.toString('utf8'));
@@ -1280,7 +1412,13 @@ function apiPayload(name, buf) {
     // 写回内容里不应再出现空壳记录以外的脏字段，也不应包含已废弃字段
     let wroteRecords = null;
     try {
-      const body = putBodies[putBodies.length - 1] || '';
+      // v6.3：同步写回顺序为 records → plans → options，最后一次 PUT 不一定是 records，
+      // 因此按 URL 定位 records.json 的那次 PUT 再解析载荷。
+      let idx = -1;
+      for (let i = putUrls.length - 1; i >= 0; i -= 1) {
+        if (putUrls[i].includes('records.json')) { idx = i; break; }
+      }
+      const body = idx >= 0 ? (putBodies[idx] || '') : '';
       const parsed = JSON.parse(body);
       const content = Buffer.from(parsed.content, 'base64').toString('utf8');
       wroteRecords = JSON.parse(content).records;

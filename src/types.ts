@@ -137,6 +137,32 @@ export interface PlansFile {
   plans: PlanItem[];
 }
 
+/* ------------------------------ 字段选项管理（v6.3） ------------------------------ */
+
+/**
+ * v6.3（需求 2）：单个受管字段（品牌 / 款式，即 allowNew 枚举）的选项管理状态。
+ *
+ *   · added   —— 用户手动输入并沉淀下来的新选项（进入录入候选）；
+ *   · removed —— 用户从候选里删除的选项（含被隐藏的 schema 内置选项）。
+ *                删除只影响后续录入的下拉候选，绝不改动任何历史记录的取值；
+ *                removed 里不属于 schema 选项的值可通过「恢复」重新回到候选。
+ */
+export interface ManagedFieldOptions {
+  added: string[];
+  removed: string[];
+}
+
+/** 全部受管字段的管理状态：键为字段 jsonKey（品牌 / 款式） */
+export type FieldOptionsState = Record<string, ManagedFieldOptions>;
+
+/** 数据仓 data/options.json 的文件结构 */
+export interface OptionsFile {
+  schemaVersion: number;
+  dataVersion: number;
+  updatedAt: string;
+  fields: Record<string, ManagedFieldOptions>;
+}
+
 /* ------------------------------ 筛选与搜索 ------------------------------ */
 
 /** 布尔字段的三态筛选：undefined = 不限 */

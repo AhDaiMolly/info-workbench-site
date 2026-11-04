@@ -81,7 +81,8 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
           || (Array.isArray(v) && v.length === 0);
         if (empty) next[f.jsonKey] = `「${f.label}」为必填项`;
       }
-      if (f.type === 'enum' && v && f.options?.length && !f.options.includes(String(v))) {
+      // v6.3（需求 2）：allowNew 枚举（品牌/款式）允许自由输入新值，不做选项集校验
+      if (f.type === 'enum' && !f.allowNew && v && f.options?.length && !f.options.includes(String(v))) {
         next[f.jsonKey] = `「${f.label}」只能从已有选项中选择`;
       }
     }
@@ -98,6 +99,16 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
     // 系统字段不参与提交（只读）
     const payload: Record<string, unknown> = {};
     for (const f of editableFields) payload[f.jsonKey] = values[f.jsonKey];
+    // v6.3（需求 2）：allowNew 枚举（品牌/款式）保存时把新值沉淀为录入候选 ——
+    // 沉淀只影响后续录入的下拉选项，历史记录取值不受影响；已在候选里的值幂等跳过。
+    for (const f of editableFields) {
+      if (f.type !== 'enum' || !f.allowNew) continue;
+      const raw = payload[f.jsonKey];
+      if (typeof raw !== 'string') continue;
+      const trimmed = raw.trim();
+      payload[f.jsonKey] = trimmed;
+      if (trimmed) app.actions.addFieldOption(f.jsonKey, trimmed);
+    }
     const typed = payload as Partial<RecordItem>;
     if (existing) {
       app.actions.updateRecord(existing.id, typed);
@@ -120,7 +131,10 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
     const value = values[f.jsonKey];
     switch (f.type) {
       case 'enum': {
-        const options = f.options ?? [];
+        // v6.3（需求 2）：allowNew 枚举（品牌/款式）的候选用「schema 选项 ∪ 已沉淀 − 已删除」
+        const options = f.allowNew
+          ? app.optionCandidates?.[f.jsonKey] ?? f.options ?? []
+          : f.options ?? [];
         if (f.allowNew) {
           return (
             <>
@@ -308,7 +322,7 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
         <div>
           <h1 className="iw-page-title">{existing ? '编辑记录' : '新增记录'}</h1>
           <p className="iw-page-sub">
-            {existing ? `#${existing.id} ${existing.名称}` : '带 * 的字段为必填项；枚举字段只能从选项中选择'}
+            {existing ? `#${existing.id} ${existing.名称}` : '带 * 的字段为必填项；品牌、款式可直接输入新值并自动加入选项'}
           </p>
         </div>
         <div className="iw-actions-row">

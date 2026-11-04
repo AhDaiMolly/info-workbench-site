@@ -25,6 +25,10 @@ export function SettingsView() {
   const [newPlanName, setNewPlanName] = useState('');
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; count: number } | null>(null);
+  // v6.3（需求 2）：字段选项管理的删除确认目标
+  const [optionDeleteTarget, setOptionDeleteTarget] = useState<{
+    fieldKey: string; fieldLabel: string; value: string; usage: number;
+  } | null>(null);
 
   useEffect(() => {
     if (app.config) {
@@ -356,6 +360,86 @@ export function SettingsView() {
         </div>
       </div>
 
+      {/* v6.3（需求 2）：字段选项管理 —— 品牌 / 款式的录入候选可删除 / 恢复 */}
+      <div className="iw-settings-card">
+        <h2 className="iw-settings-title">字段选项管理</h2>
+        {(() => {
+          const managed = app.schema.fields.filter(
+            (f) => f.type === 'enum' && f.allowNew && !f.system && !f.readonly,
+          );
+          const usageOf = (fieldKey: string, value: string) =>
+            app.records.filter(
+              (r) => String((r as unknown as Record<string, unknown>)[fieldKey] ?? '') === value,
+            ).length;
+          if (!managed.length) {
+            return <div className="iw-field-hint">当前没有支持自由输入的枚举字段。</div>;
+          }
+          return (
+            <div data-testid="iw-options-admin">
+              {managed.map((f) => {
+                const candidates = app.optionCandidates?.[f.jsonKey] ?? [];
+                const removed = app.options?.[f.jsonKey]?.removed ?? [];
+                return (
+                  <div key={f.jsonKey} style={{ marginBottom: 16 }} data-testid={`iw-options-field-${f.jsonKey}`}>
+                    <div className="iw-plan-name" style={{ marginBottom: 8 }}>{f.label}</div>
+                    <div className="iw-chip-group">
+                      {candidates.length === 0 ? (
+                        <div className="iw-field-hint">暂无候选选项；在表单里输入新值保存后会自动加入。</div>
+                      ) : (
+                        candidates.map((v) => (
+                          <div className="iw-plan-row" key={v} data-testid={`iw-option-row-${f.jsonKey}`}>
+                            <span className="iw-plan-name">
+                              {v}
+                              <span className="iw-plan-count">（{usageOf(f.jsonKey, v)} 条记录在用）</span>
+                            </span>
+                            <button
+                              type="button"
+                              className="iw-btn iw-btn-ghost"
+                              data-testid={`iw-option-delete-${f.jsonKey}`}
+                              aria-label={`删除选项：${v}`}
+                              onClick={() => setOptionDeleteTarget({
+                                fieldKey: f.jsonKey,
+                                fieldLabel: f.label,
+                                value: v,
+                                usage: usageOf(f.jsonKey, v),
+                              })}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    {removed.length ? (
+                      <div style={{ marginTop: 8 }}>
+                        <span className="iw-field-hint">已删除的候选：</span>
+                        {removed.map((v) => (
+                          <button
+                            key={v}
+                            type="button"
+                            className="iw-btn iw-btn-sm"
+                            style={{ marginLeft: 8 }}
+                            data-testid={`iw-option-restore-${f.jsonKey}`}
+                            aria-label={`恢复选项：${v}`}
+                            onClick={() => app.actions.restoreFieldOption(f.jsonKey, v)}
+                          >
+                            恢复「{v}」
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+        <div className="iw-field-hint">
+          品牌、款式支持直接输入新值，保存后会自动加入这里的候选。删除选项只影响后续录入的下拉候选，
+          历史记录的取值保持原样显示，不受影响。
+        </div>
+      </div>
+
       <div className="iw-settings-card">
         <h2 className="iw-settings-title">版本信息</h2>
         <div className="iw-kv-list" data-testid="iw-version-info">
@@ -418,6 +502,27 @@ export function SettingsView() {
         <div className="iw-field-hint" data-testid="iw-delete-plan-hint">
           确定删除「{deleteTarget?.name}」吗？清单里有 {deleteTarget?.count ?? 0}{' '}
           条记录；删除清单只解除记录关联，不会删除任何记录本身。
+        </div>
+      </Modal>
+      <Modal
+        open={optionDeleteTarget !== null}
+        title="删除字段选项"
+        confirmText="删除"
+        danger
+        onConfirm={() => {
+          if (optionDeleteTarget) {
+            app.actions.removeFieldOption(optionDeleteTarget.fieldKey, optionDeleteTarget.value);
+          }
+          setOptionDeleteTarget(null);
+        }}
+        onCancel={() => setOptionDeleteTarget(null)}
+      >
+        <div className="iw-field-hint" data-testid="iw-delete-option-hint">
+          确定删除「{optionDeleteTarget?.fieldLabel}」的选项「{optionDeleteTarget?.value}」吗？
+          {optionDeleteTarget && optionDeleteTarget.usage > 0
+            ? `当前有 ${optionDeleteTarget.usage} 条记录正在使用这个值；`
+            : ''}
+          删除后它不再出现在后续录入的候选里，但历史记录仍保留原值显示。
         </div>
       </Modal>
     </>

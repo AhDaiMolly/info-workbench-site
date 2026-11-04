@@ -59,6 +59,9 @@ vi.mock('../store/store', () => ({
     syncMessage: '',
     lastSyncedAt: 0,
     pending: [],
+    // v6.3（需求 2）：字段选项管理卡片依赖
+    optionCandidates: {},
+    options: {},
     actionLog: [],
     backupIntervalDays: 7,
     actions: {
@@ -66,6 +69,8 @@ vi.mock('../store/store', () => ({
       renamePlanList: holder.renamePlanList,
       deletePlanList: holder.deletePlanList,
       toggleRecordInPlan: holder.toggleRecordInPlan,
+      removeFieldOption: vi.fn(),
+      restoreFieldOption: vi.fn(),
     },
   }),
 }));

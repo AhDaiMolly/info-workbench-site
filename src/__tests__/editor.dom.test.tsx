@@ -13,11 +13,18 @@ import { DEFAULT_SCHEMA } from '../schema';
 import type { RecordItem } from '../types';
 
 // vi.hoisted：mock 工厂在模块导入阶段就会执行，常量必须提前初始化
-const { navigateMock, updateRecordMock, addRecordMock, togglePlanMock, plansHolder } = vi.hoisted(() => ({
+const {
+  navigateMock, updateRecordMock, addRecordMock, togglePlanMock, plansHolder,
+  addFieldOptionMock, optionCandidatesHolder,
+} = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   updateRecordMock: vi.fn(),
   addRecordMock: vi.fn((_values: unknown, _planIds?: string[]) => 99),
   togglePlanMock: vi.fn(),
+  // v6.3（需求 2）：表单保存时沉淀新品牌/新款式
+  addFieldOptionMock: vi.fn(),
+  // v6.3：受管字段的录入候选（mock 为可写容器，便于 v6.3 用例定制）
+  optionCandidatesHolder: { candidates: {} as Record<string, string[]> },
   plansHolder: { plans: [] as Array<{ id: string; 名称: string; 记录ID列表: number[]; 创建时间: string; 更新时间: string }> },
 }));
 
@@ -54,10 +61,13 @@ vi.mock('../store/store', () => ({
     query: '',
     sort: { key: '更新时间', dir: 'desc' },
     pending: [],
+    // v6.3（需求 2）：表单的 allowNew 枚举候选取自这里
+    optionCandidates: optionCandidatesHolder.candidates,
     actions: {
       addRecord: addRecordMock,
       updateRecord: updateRecordMock,
       toggleRecordInPlan: togglePlanMock,
+      addFieldOption: addFieldOptionMock,
     },
   }),
 }));
@@ -81,6 +91,8 @@ beforeEach(() => {
   cleanup();
   records = [sampleRecord];
   plansHolder.plans = [];
+  optionCandidatesHolder.candidates = {};
+  addFieldOptionMock.mockClear();
   navigateMock.mockClear();
   updateRecordMock.mockClear();
   addRecordMock.mockClear();
@@ -535,5 +547,51 @@ describe('v6.2.1 · 新增表单里的计划清单（保存后一并写入）', 
     const detailChip = screen.getByRole('button', { name: '计划清单：2026 春季' }) as HTMLButtonElement;
     expect(detailChip.getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByTestId('iw-plan-card').textContent).toContain('当前共在 1 份清单里');
+  });
+});
+
+describe('v6.3 · 需求 2：品牌 / 款式自由输入并沉淀为选项', () => {
+  it('手动输入选项外的新品牌 / 新款式 → 保存成功（不再被「只能从已有选项中选择」拦截），新值沉淀进选项', () => {
+    optionCandidatesHolder.candidates = { 品牌: ['品牌甲'] };
+    render(<EditorForm recordId={null} />);
+
+    const nameInput = document.querySelector('#fld-名称') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: '自由输入新品' } });
+
+    // 品牌：选「＋ 其他（手动输入）」后自由输入
+    fireEvent.change(screen.getByLabelText('品牌'), { target: { value: '__custom__' } });
+    fireEvent.change(screen.getByPlaceholderText('输入新的品牌'), { target: { value: '  全新品牌栗栗  ' } });
+    // 款式：同样自由输入
+    fireEvent.change(screen.getByLabelText('款式'), { target: { value: '__custom__' } });
+    fireEvent.change(screen.getByPlaceholderText('输入新的款式'), { target: { value: '新款式' } });
+
+    fireEvent.click(screen.getAllByText('保存')[0]);
+
+    // 保存真的发生了（没有被校验拦下）
+    expect(addRecordMock).toHaveBeenCalledTimes(1);
+    const [payload] = addRecordMock.mock.calls[0] as [Partial<RecordItem>, string[] | undefined];
+    expect(payload.名称).toBe('自由输入新品');
+    expect(payload.品牌).toBe('全新品牌栗栗'); // 首尾空白被裁剪
+    expect(payload.款式).toBe('新款式');
+    expect(navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'detail', id: 99 }));
+    expect(document.querySelector('.iw-field-error')).toBeNull();
+
+    // 新值自动沉淀为候选选项
+    expect(addFieldOptionMock).toHaveBeenCalledWith('品牌', '全新品牌栗栗');
+    expect(addFieldOptionMock).toHaveBeenCalledWith('款式', '新款式');
+  });
+
+  it('候选里已有的值可直接选择并保存', () => {
+    optionCandidatesHolder.candidates = { 品牌: ['品牌甲'] };
+    render(<EditorForm recordId={null} />);
+
+    const nameInput = document.querySelector('#fld-名称') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: '已有候选' } });
+    fireEvent.change(screen.getByLabelText('品牌'), { target: { value: '品牌甲' } });
+    fireEvent.click(screen.getAllByText('保存')[0]);
+
+    expect(addRecordMock).toHaveBeenCalledTimes(1);
+    const [payload] = addRecordMock.mock.calls[0] as [Partial<RecordItem>, string[] | undefined];
+    expect(payload.品牌).toBe('品牌甲');
   });
 });

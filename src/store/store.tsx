@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import type {
-  ActionLogEntry, ConflictEntry, ConnectionStatus, Filters, PlanItem, RecordItem, Schema, SortSpec, SuggestionEntry,
+  ActionLogEntry, ConflictEntry, ConnectionStatus, FieldOptionsState, Filters, PlanItem, RecordItem, Schema, SortSpec, SuggestionEntry,
 } from '../types';
 import { EMPTY_FILTERS } from '../types';
 import { DEFAULT_SCHEMA, mergeSchema } from '../schema';
@@ -21,8 +21,9 @@ import {
 import { computePendingChecks, checkSummary, type IgnoredCheckEntry } from './pendingChecks';
 import {
   appendActionLog, clearConfig, readActionLog, readBaseline, readCache, readConfigMeta, readIgnoredChecks,
-  readLastIssuedId, readPending, readPlansBaseline, readPrefs, readSettings, readToken, writeBaseline, writeCache,
-  writeConfig, writeIgnoredChecks, writeLastIssuedId, writePending, writePlansBaseline, writePrefs, writeSettings,
+  readLastIssuedId, readOptionsBaseline, readPending, readPlansBaseline, readPrefs, readSettings, readToken,
+  writeBaseline, writeCache, writeConfig, writeIgnoredChecks, writeLastIssuedId, writeOptionsBaseline, writePending,
+  writePlansBaseline, writePrefs, writeSettings,
   type ConfigMeta, type PendingChange, type WriteOutcome,
 } from './persist';
 import {
@@ -30,6 +31,10 @@ import {
   makePlansFile, normalizePlans, parsePlansFile, planPlansSync, plansEqual, prunePlanMembers,
   removeRecordFromPlan, renamePlan as renamePlanList,
 } from './plans';
+import {
+  addOptionValue, effectiveOptions as effectiveOptionsFor, makeOptionsFile, mergeOptionsSync,
+  normalizeOptionsState, optionsStateEqual, parseOptionsFile, removeOptionValue, restoreOptionValue,
+} from './options';
 import { GithubClient, GithubError, parseRepoUrl } from '../sync/github';
 import { hasContentDiff, type FieldDiff } from '../sync/conflict';
 import { decideAutoPull, planRemoteSync } from './syncPolicy';
@@ -41,6 +46,8 @@ export const SCHEMA_FILE_PATH = 'data/schema.json';
 export const AUDIT_FILE_PATH = 'data/migration-audit.json';
 /** v6.2（需求 1）：计划清单独立文件，随同步写回数据仓 */
 export const PLANS_FILE_PATH = 'data/plans.json';
+/** v6.3（需求 2）：字段选项管理独立文件（品牌 / 款式的沉淀与删除），随同步写回数据仓 */
+export const OPTIONS_FILE_PATH = 'data/options.json';
 
 /**
  * v4：回收站整体移除，记录数口径 = 实际记录数（不再有「未删除 / 已删除」之分）。
@@ -83,6 +90,15 @@ export interface AppState {
   plansBaseSha: string | null;
   /** v6.2：plans.json 的数据版本 */
   plansDataVersion: number;
+  /**
+   * v6.3（需求 2）：品牌 / 款式的字段选项管理状态（沉淀 added / 删除 removed）。
+   * 只影响后续录入的下拉候选，与任何记录取值无关。
+   */
+  options: FieldOptionsState;
+  /** v6.3：options.json 的远端 sha（null = 远端尚无该文件，首次写回时创建） */
+  optionsBaseSha: string | null;
+  /** v6.3：options.json 的数据版本 */
+  optionsDataVersion: number;
   config: ConfigMeta | null;
   connection: ConnectionStatus;
   baseSha: string | null;
@@ -122,6 +138,8 @@ type Action =
   | { type: 'SET_IGNORED_CHECKS'; entries: IgnoredCheckEntry[] }
   /** v6.2：计划清单整体替换（本地增删改 / 远端拉取合并 / 写回对齐都走它）；changes 随之入待同步队列 */
   | { type: 'SET_PLANS'; plans: PlanItem[]; baseSha?: string | null; dataVersion?: number; changes?: PendingChange[] }
+  /** v6.3：字段选项管理状态整体替换（本地沉淀删除 / 远端拉取合并 / 写回对齐都走它）；changes 随之入待同步队列 */
+  | { type: 'SET_OPTIONS'; options: FieldOptionsState; baseSha?: string | null; dataVersion?: number; changes?: PendingChange[] }
   | { type: 'SET_CONFIG'; config: ConfigMeta | null }
   | { type: 'SET_CONNECTION'; status: ConnectionStatus }
   | { type: 'SET_SYNC'; status: AppState['syncStatus']; message?: string | null }
@@ -183,6 +201,15 @@ function reducer(state: AppState, action: Action): AppState {
         pending: action.changes ? [...state.pending, ...action.changes] : state.pending,
         plansBaseSha: action.baseSha !== undefined ? action.baseSha : state.plansBaseSha,
         plansDataVersion: action.dataVersion ?? state.plansDataVersion,
+      };
+    case 'SET_OPTIONS':
+      return {
+        ...state,
+        options: action.options,
+        // 本地沉淀 / 删除带 changes（进待同步队列）；远端拉取/写回对齐不带（不动队列）
+        pending: action.changes ? [...state.pending, ...action.changes] : state.pending,
+        optionsBaseSha: action.baseSha !== undefined ? action.baseSha : state.optionsBaseSha,
+        optionsDataVersion: action.dataVersion ?? state.optionsDataVersion,
       };
     case 'SET_CONFIG':
       return { ...state, config: action.config };
@@ -295,6 +322,10 @@ function initState(): AppState {
     plans: normalizePlans(cache?.plans),
     plansBaseSha: cache?.plansBaseSha ?? null,
     plansDataVersion: cache?.plansDataVersion ?? 1,
+    // v6.3：字段选项管理状态走本地缓存（远端拉取 / 本地写入时更新）
+    options: normalizeOptionsState(cache?.options),
+    optionsBaseSha: cache?.optionsBaseSha ?? null,
+    optionsDataVersion: cache?.optionsDataVersion ?? 1,
     config,
     connection: 'unconfigured',
     baseSha: cache?.baseSha ?? null,
@@ -349,6 +380,12 @@ export interface AppActions {
   deletePlanList: (planId: string) => void;
   /** v6.2（需求 1）：把记录加入/移出计划清单（按当前成员关系自动取反） */
   toggleRecordInPlan: (planId: string, recordId: number) => void;
+  /** v6.3（需求 2）：沉淀一个新的品牌 / 款式选项（手动输入保存成功后自动调用；已在候选里为幂等 no-op） */
+  addFieldOption: (fieldKey: string, value: string) => void;
+  /** v6.3（需求 2）：从候选里删除一个选项（历史记录原值保留不受影响） */
+  removeFieldOption: (fieldKey: string, value: string) => void;
+  /** v6.3（需求 2）：恢复一个被删除的选项（重新出现在候选里） */
+  restoreFieldOption: (fieldKey: string, value: string) => void;
   saveConfig: (input: { repoUrl: string; branch: string; token: string; sessionOnly: boolean }) => Promise<boolean>;
   clearConfigAction: () => void;
   testConnection: () => Promise<boolean>;
@@ -369,6 +406,8 @@ const AppContext = createContext<
     suggestions: SuggestionEntry[];
     /** v6.2：记录 ID → 所在计划清单 ID 集合（Provider 派生，筛选/详情共用） */
     planMembers: Map<number, Set<string>>;
+    /** v6.3：受管字段（品牌/款式）的录入候选（schema 选项 ∪ 沉淀 − 删除，Provider 派生） */
+    optionCandidates: Record<string, string[]>;
     actions: AppActions;
   }) | null
 >(null);
@@ -408,11 +447,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       plans: state.plans,
       plansBaseSha: state.plansBaseSha,
       plansDataVersion: state.plansDataVersion,
+      // v6.3：字段选项管理状态随数据缓存一并落本地
+      options: state.options,
+      optionsBaseSha: state.optionsBaseSha,
+      optionsDataVersion: state.optionsDataVersion,
     });
     // 质检 P2-3：本地存储写失败（配额超限）必须让用户知道，不能静默失败
     const message = storageErrorNotice(outcome, '最新数据');
     if (message) dispatch({ type: 'SET_NOTICE', notice: message });
-  }, [state.records, state.schema, state.baseSha, state.dataVersion, state.lastSyncedAt, state.plans, state.plansBaseSha, state.plansDataVersion]);
+  }, [state.records, state.schema, state.baseSha, state.dataVersion, state.lastSyncedAt, state.plans, state.plansBaseSha, state.plansDataVersion, state.options, state.optionsBaseSha, state.optionsDataVersion]);
 
   useEffect(() => {
     const outcome = writePending({ baseSha: state.baseSha, changes: state.pending });
@@ -684,6 +727,54 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'SET_PLANS', plans, changes: [planChange(planId, '编辑')] });
     };
 
+    /* -------- v6.3（需求 2）：品牌 / 款式选项的沉淀、删除与恢复 -------- */
+    /**
+     * 字段选项的待同步队列条目：记录 ID 固定 0（不指向任何记录），
+     * 字段[0] = '字段选项'、字段[1] = 字段 jsonKey。作用与计划清单一致：
+     *   ① 阻断启动自动拉取（decideAutoPull 按 pendingCount 判断）
+     *   ② 无基线快照时按「动过的字段」重建合并归属（options.mergeWithoutBaseline）
+     */
+    const optionChange = (fieldKey: string, 动作: '新增' | '编辑' | '删除'): PendingChange => ({
+      id: `${fieldKey}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      记录ID: 0,
+      动作,
+      字段: ['字段选项', fieldKey],
+      时间: new Date().toISOString(),
+    });
+
+    /** 某字段的当前录入候选（schema 选项 ∪ 已沉淀 − 已删除） */
+    const candidatesOf = (st: AppState, fieldKey: string): string[] => {
+      const f = st.schema.fields.find((x) => x.jsonKey === fieldKey);
+      const opts = f?.type === 'enum' && f.allowNew ? f.options ?? [] : [];
+      return effectiveOptionsFor(opts, st.options[fieldKey]);
+    };
+
+    const addFieldOptionAction = (fieldKey: string, value: string) => {
+      const st = current();
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      if (candidatesOf(st, fieldKey).includes(trimmed)) return; // 已在候选里 → 幂等 no-op
+      const inSchema = st.schema.fields.find((x) => x.jsonKey === fieldKey)?.options?.includes(trimmed) ?? false;
+      const options = addOptionValue(st.options, fieldKey, trimmed, inSchema);
+      if (options === st.options) return;
+      dispatch({ type: 'SET_OPTIONS', options, changes: [optionChange(fieldKey, '新增')] });
+    };
+
+    const removeFieldOptionAction = (fieldKey: string, value: string) => {
+      const st = current();
+      const options = removeOptionValue(st.options, fieldKey, value);
+      if (options === st.options) return;
+      dispatch({ type: 'SET_OPTIONS', options, changes: [optionChange(fieldKey, '删除')] });
+    };
+
+    const restoreFieldOptionAction = (fieldKey: string, value: string) => {
+      const st = current();
+      const inSchema = st.schema.fields.find((x) => x.jsonKey === fieldKey)?.options?.includes(value) ?? false;
+      const options = restoreOptionValue(st.options, fieldKey, value, inSchema);
+      if (options === st.options) return;
+      dispatch({ type: 'SET_OPTIONS', options, changes: [optionChange(fieldKey, '编辑')] });
+    };
+
     const makeClient = (): GithubClient | null => {
       const st = current();
       if (!st.config) return null;
@@ -746,6 +837,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
           type: 'SET_NOTICE',
           notice: `计划清单有 ${planRes.conflicts.length} 处与远端不一致，已保留本地版本，下次同步会写回。`,
         });
+      }
+    };
+
+    /**
+     * v6.3（需求 2）：拉取并合并远端字段选项管理状态。
+     * · 远端没有 options.json（404）→ 保留本地状态，首次写回时创建该文件
+     * · 远端有 → 与本地做三方合并（基线 = iw.optionsBaseline，缺失时按待同步队列归属）
+     * · 选项是集合语义（新增 ∪ / 删除 −），天然可合并，无字段级冲突，不阻断主流程
+     */
+    const pullOptions = async (client: GithubClient, st: AppState) => {
+      let remoteSha: string;
+      let remoteParsed: { state: FieldOptionsState; dataVersion: number };
+      try {
+        const remote = await client.getFile(OPTIONS_FILE_PATH);
+        remoteSha = remote.sha;
+        remoteParsed = parseOptionsFile(remote.content);
+      } catch (err) {
+        if (err instanceof GithubError && err.kind === 'notfound') return; // 远端尚无选项文件
+        throw err; // 其余错误（网络 / 鉴权）沿用外层记录同步的错误处理
+      }
+      const res = mergeOptionsSync({
+        local: st.options,
+        remote: remoteParsed.state,
+        baseline: readOptionsBaseline(),
+        pending: st.pending,
+      });
+      dispatch({
+        type: 'SET_OPTIONS',
+        options: res.state,
+        baseSha: remoteSha,
+        dataVersion: remoteParsed.dataVersion,
+      });
+      // 与记录 / 清单基线同一纪律：只有「本地与远端完全一致」时基线才前移
+      if (optionsStateEqual(res.state, remoteParsed.state)) {
+        writeOptionsBaseline(remoteParsed.state);
       }
     };
 
@@ -820,6 +946,64 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return true;
     };
 
+    /**
+     * v6.3（需求 2）：把字段选项管理状态写回远端（随 syncNow 一并执行）。
+     * · 远端 sha 与本地记录的不一致时先做三方合并（集合语义，无真冲突）
+     * · 本地与远端内容一致时不产生新版本（与记录写回的 AC-7 同口径）
+     */
+    const syncOptions = async (): Promise<boolean> => {
+      const st = current();
+      const client = makeClient();
+      if (!client) return false;
+      let remoteSha: string | null = null;
+      let remoteState: FieldOptionsState = {};
+      let remoteDataVersion = 0;
+      try {
+        const remote = await client.getFile(OPTIONS_FILE_PATH);
+        remoteSha = remote.sha;
+        const parsed = parseOptionsFile(remote.content);
+        remoteState = parsed.state;
+        remoteDataVersion = parsed.dataVersion;
+      } catch (err) {
+        if (!(err instanceof GithubError && err.kind === 'notfound')) {
+          const message = err instanceof GithubError ? err.message : '字段选项写回失败';
+          dispatch({ type: 'SET_SYNC', status: 'error', message });
+          recordAction('同步写回', '失败', `字段选项：${message}`);
+          return false;
+        }
+        // 远端尚无 options.json → 首次写回时创建（putFile sha 传 null）
+      }
+
+      let state = st.options;
+      if (remoteSha !== null && remoteSha !== st.optionsBaseSha) {
+        // 远端选项已被改动 → 基线三方合并（集合语义，无字段级冲突）
+        const res = mergeOptionsSync({
+          local: st.options,
+          remote: remoteState,
+          baseline: readOptionsBaseline(),
+          pending: st.pending,
+        });
+        state = res.state;
+      }
+
+      if (optionsStateEqual(state, remoteState)) {
+        // 与远端一致：只对齐元数据与基线，不产生新版本
+        if (remoteSha !== null) {
+          dispatch({ type: 'SET_OPTIONS', options: remoteState, baseSha: remoteSha, dataVersion: remoteDataVersion });
+          writeOptionsBaseline(remoteState);
+        }
+        return true;
+      }
+
+      const payload = makeOptionsFile(state, remoteDataVersion + 1);
+      const message = `工作台字段选项 ${payload.dataVersion} · ${Object.keys(payload.fields).length} 个字段 · ${payload.updatedAt}`;
+      const result = await client.putFile(OPTIONS_FILE_PATH, JSON.stringify(payload, null, 2), remoteSha, message);
+      dispatch({ type: 'SET_OPTIONS', options: state, baseSha: result.sha, dataVersion: payload.dataVersion });
+      writeOptionsBaseline(state);
+      recordAction('同步写回', '成功', `已写入字段选项管理状态（数据版本 ${payload.dataVersion}）`);
+      return true;
+    };
+
     const pull = async (silent = false): Promise<boolean> => {
       const st = current();
       if (!st.config) return false;
@@ -847,6 +1031,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         // v6.2（需求 1）：计划清单拉取与三方合并（远端尚无 plans.json 时视为空清单，不阻断记录主流程）
         await pullPlans(client, st);
+
+        // v6.3（需求 2）：字段选项管理状态拉取与三方合并（远端尚无 options.json 时保留本地，不阻断主流程）
+        await pullOptions(client, st);
 
         // 质检 P0-1 / P1-1 / P1-2 / P1-3：
         // 不再无条件用远端覆盖本地记录，而是基于「持久化基线快照」做真三方合并。
@@ -990,7 +1177,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'SET_AUTO_PULL_BLOCK', blocked: false, message: null });
           recordAction('同步写回', '成功', '远端已是最新，无需写入');
           // v6.2：记录无改动也要核对计划清单（可能只有清单改动）
-          return await syncPlans(client, records);
+          const plansOkNoDiff = await syncPlans(client, records);
+          // v6.3：字段选项同理（可能只有选项改动）
+          const optionsOkNoDiff = plansOkNoDiff ? await syncOptions() : false;
+          if (plansOkNoDiff && !optionsOkNoDiff) {
+            dispatch({ type: 'SET_NOTICE', notice: '记录已写回，但字段选项写回失败，请再次点「同步到 GitHub」重试。' });
+            return false;
+          }
+          return plansOkNoDiff;
         }
 
         const payload = {
@@ -1023,6 +1217,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const plansOk = await syncPlans(client, records);
         if (!plansOk) {
           dispatch({ type: 'SET_NOTICE', notice: '记录已写回，但计划清单写回失败，请再次点「同步到 GitHub」重试。' });
+          return false;
+        }
+        // v6.3（需求 2）：记录与清单都写回成功后再写字段选项（失败时如实报错，前者已写回不受影响）
+        const optionsOk = await syncOptions();
+        if (!optionsOk) {
+          dispatch({ type: 'SET_NOTICE', notice: '记录与计划清单已写回，但字段选项写回失败，请再次点「同步到 GitHub」重试。' });
           return false;
         }
         return true;
@@ -1249,6 +1449,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       renamePlanList: renamePlanListAction,
       deletePlanList: deletePlanListAction,
       toggleRecordInPlan: toggleRecordInPlanAction,
+      addFieldOption: addFieldOptionAction,
+      removeFieldOption: removeFieldOptionAction,
+      restoreFieldOption: restoreFieldOptionAction,
       saveConfig,
       clearConfigAction,
       testConnection,
@@ -1271,12 +1474,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /* -------- v6.2（需求 1）：计划清单成员索引（列表筛选 / 详情展示共用派生） -------- */
   const planMembers = useMemo(() => buildPlanMembers(state.plans), [state.plans]);
 
+  /* -------- v6.3（需求 2）：受管字段的录入候选（schema 选项 ∪ 沉淀 − 删除） -------- */
+  const optionCandidates = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    for (const f of state.schema.fields) {
+      if (f.type !== 'enum' || !f.allowNew || f.system || f.readonly) continue;
+      out[f.jsonKey] = effectiveOptionsFor(f.options ?? [], state.options[f.jsonKey]);
+    }
+    return out;
+  }, [state.schema, state.options]);
+
   const value = useMemo(
     () => ({
       ...state,
       conflicts: pendingChecks.conflicts,
       suggestions: pendingChecks.suggestions,
       planMembers,
+      /** v6.3：受管字段（品牌 / 款式）的录入候选（schema 选项 ∪ 沉淀 − 删除） */
+      optionCandidates,
       actions,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
