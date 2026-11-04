@@ -42,6 +42,7 @@ const DATA_FILE_PATTERNS = [
   /^records.*\.json$/i,
   /^migration-audit.*\.json$/i,
   /^pending-conflicts.*\.json$/i,
+  /^plans.*\.json$/i,
   /^信息汇总\.xlsx$/i,
 ];
 

@@ -178,12 +178,12 @@ export class GithubClient {
     };
   }
 
-  /** 写回文件。sha 为必填的乐观锁参数。 */
-  async putFile(path: string, content: string, sha: string, message: string): Promise<PutResult> {
+  /** 写回文件。sha 为乐观锁参数：传远端当前 sha 做更新；传 null 表示新建文件（v6.2：plans.json 首次落仓）。 */
+  async putFile(path: string, content: string, sha: string | null, message: string): Promise<PutResult> {
     const body = JSON.stringify({
       message,
       content: toBase64(content),
-      sha,
+      ...(sha ? { sha } : {}),
       branch: this.branch,
     });
     const res = await this.request(this.url(path), { method: 'PUT', headers: this.headers(), body });

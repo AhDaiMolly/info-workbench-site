@@ -25,6 +25,8 @@ const MULTI_KEYS: Array<keyof Filters> = [
   '品牌', '分类', '款式', '季节', '教程', '推荐', '计划', '电子版尺码',
   // v5（R5）：电子版 / 纸质版 两个下拉合并为一个多选（电子版 / 纸质版 / 任意拥有）
   '拥有形态',
+  // v6.2（需求 1）：计划清单筛选 —— 取值为清单 ID，多选 OR 语义
+  '计划清单',
 ];
 const BOOL_KEYS: Array<keyof Filters> = ['做过'];
 
@@ -41,12 +43,13 @@ const FILTER_PARAM: Record<string, string> = {
   电子版尺码: 'size',
   拥有形态: 'own',
   做过: 'done',
+  计划清单: 'plist',
 };
 
 function parseFilters(params: URLSearchParams): Filters {
   const filters: Filters = {
     ...EMPTY_FILTERS, 品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 计划: [],
-    电子版尺码: [], 拥有形态: [],
+    电子版尺码: [], 拥有形态: [], 计划清单: [],
   };
   for (const key of MULTI_KEYS) {
     const raw = params.get(FILTER_PARAM[key]);

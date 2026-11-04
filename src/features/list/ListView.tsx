@@ -26,8 +26,8 @@ export function ListView() {
   const visible = visibleColumns.length ? visibleColumns : DEFAULT_VISIBLE_COLUMNS;
 
   const filtered = useMemo(
-    () => applyQuery(records, filters, query, app.indexes),
-    [records, filters, query, app.indexes],
+    () => applyQuery(records, filters, query, app.indexes, app.planMembers),
+    [records, filters, query, app.indexes, app.planMembers],
   );
 
   const sorted = useMemo(() => sortRecords(filtered, sort), [filtered, sort]);
@@ -186,6 +186,7 @@ export function ListView() {
         }}
         onSavePreset={app.actions.savePreset}
         onDeletePreset={app.actions.deletePreset}
+        plans={app.plans.map((p) => ({ id: p.id, name: p.名称 }))}
       />
 
       <div className="iw-table-wrap">

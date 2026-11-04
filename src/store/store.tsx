@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import type {
-  ActionLogEntry, ConflictEntry, ConnectionStatus, Filters, RecordItem, Schema, SortSpec, SuggestionEntry,
+  ActionLogEntry, ConflictEntry, ConnectionStatus, Filters, PlanItem, RecordItem, Schema, SortSpec, SuggestionEntry,
 } from '../types';
 import { EMPTY_FILTERS } from '../types';
 import { DEFAULT_SCHEMA, mergeSchema } from '../schema';
@@ -21,10 +21,15 @@ import {
 import { computePendingChecks, checkSummary, type IgnoredCheckEntry } from './pendingChecks';
 import {
   appendActionLog, clearConfig, readActionLog, readBaseline, readCache, readConfigMeta, readIgnoredChecks,
-  readLastIssuedId, readPending, readPrefs, readSettings, readToken, writeBaseline, writeCache,
-  writeConfig, writeIgnoredChecks, writeLastIssuedId, writePending, writePrefs, writeSettings,
+  readLastIssuedId, readPending, readPlansBaseline, readPrefs, readSettings, readToken, writeBaseline, writeCache,
+  writeConfig, writeIgnoredChecks, writeLastIssuedId, writePending, writePlansBaseline, writePrefs, writeSettings,
   type ConfigMeta, type PendingChange, type WriteOutcome,
 } from './persist';
+import {
+  addRecordToPlan, buildPlanMembers, createPlan as createPlanList, deletePlan as deletePlanList,
+  makePlansFile, normalizePlans, parsePlansFile, planPlansSync, plansEqual, prunePlanMembers,
+  removeRecordFromPlan, renamePlan as renamePlanList,
+} from './plans';
 import { GithubClient, GithubError, parseRepoUrl } from '../sync/github';
 import { hasContentDiff, type FieldDiff } from '../sync/conflict';
 import { decideAutoPull, planRemoteSync } from './syncPolicy';
@@ -34,6 +39,8 @@ import { applyQuery, computeStats, sortRecords } from './selectors';
 export const DATA_FILE_PATH = 'data/records.json';
 export const SCHEMA_FILE_PATH = 'data/schema.json';
 export const AUDIT_FILE_PATH = 'data/migration-audit.json';
+/** v6.2（需求 1）：计划清单独立文件，随同步写回数据仓 */
+export const PLANS_FILE_PATH = 'data/plans.json';
 
 /**
  * v4：回收站整体移除，记录数口径 = 实际记录数（不再有「未删除 / 已删除」之分）。
@@ -67,6 +74,15 @@ export interface AppState {
    */
   /** v6.1.1：用户选择「忽略」的待确认项（浏览器本地持久化，设置页可查看与恢复） */
   ignoredChecks: IgnoredCheckEntry[];
+  /**
+   * v6.2（需求 1）：计划清单（自建清单，成员关系存在清单一侧）。
+   * 与「状态及评价」里的「计划」枚举完全独立 —— 已有数据零迁移。
+   */
+  plans: PlanItem[];
+  /** v6.2：plans.json 的远端 sha（null = 远端尚无该文件，首次写回时创建） */
+  plansBaseSha: string | null;
+  /** v6.2：plans.json 的数据版本 */
+  plansDataVersion: number;
   config: ConfigMeta | null;
   connection: ConnectionStatus;
   baseSha: string | null;
@@ -104,6 +120,8 @@ type Action =
   | { type: 'SET_SCHEMA'; schema: Schema }
   /** v6.1.1：已忽略的待确认项整体替换（读取 / 忽略 / 恢复都走它） */
   | { type: 'SET_IGNORED_CHECKS'; entries: IgnoredCheckEntry[] }
+  /** v6.2：计划清单整体替换（本地增删改 / 远端拉取合并 / 写回对齐都走它）；changes 随之入待同步队列 */
+  | { type: 'SET_PLANS'; plans: PlanItem[]; baseSha?: string | null; dataVersion?: number; changes?: PendingChange[] }
   | { type: 'SET_CONFIG'; config: ConfigMeta | null }
   | { type: 'SET_CONNECTION'; status: ConnectionStatus }
   | { type: 'SET_SYNC'; status: AppState['syncStatus']; message?: string | null }
@@ -157,6 +175,15 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, schema: action.schema };
     case 'SET_IGNORED_CHECKS':
       return { ...state, ignoredChecks: action.entries };
+    case 'SET_PLANS':
+      return {
+        ...state,
+        plans: action.plans,
+        // 本地增删改带 changes（进待同步队列）；远端拉取/写回对齐不带（不动队列）
+        pending: action.changes ? [...state.pending, ...action.changes] : state.pending,
+        plansBaseSha: action.baseSha !== undefined ? action.baseSha : state.plansBaseSha,
+        plansDataVersion: action.dataVersion ?? state.plansDataVersion,
+      };
     case 'SET_CONFIG':
       return { ...state, config: action.config };
     case 'SET_CONNECTION':
@@ -264,6 +291,10 @@ function initState(): AppState {
     pageSize: prefs.pageSize ?? 50,
     presets: prefs.presets ?? [],
     ignoredChecks: readIgnoredChecks(),
+    // v6.2：计划清单走本地缓存（远端拉取 / 本地写入时更新）
+    plans: normalizePlans(cache?.plans),
+    plansBaseSha: cache?.plansBaseSha ?? null,
+    plansDataVersion: cache?.plansDataVersion ?? 1,
     config,
     connection: 'unconfigured',
     baseSha: cache?.baseSha ?? null,
@@ -310,6 +341,14 @@ export interface AppActions {
   restoreIgnoredCheck: (key: string) => void;
   /** v6.1.1：恢复全部被忽略的待确认项 */
   restoreAllIgnoredChecks: () => void;
+  /** v6.2（需求 1）：新建计划清单，成功返回清单 ID，名称为空返回 null */
+  createPlanList: (name: string) => string | null;
+  /** v6.2（需求 1）：重命名计划清单 */
+  renamePlanList: (planId: string, name: string) => void;
+  /** v6.2（需求 1）：删除计划清单 —— 只解除记录关联，不删除任何记录 */
+  deletePlanList: (planId: string) => void;
+  /** v6.2（需求 1）：把记录加入/移出计划清单（按当前成员关系自动取反） */
+  toggleRecordInPlan: (planId: string, recordId: number) => void;
   saveConfig: (input: { repoUrl: string; branch: string; token: string; sessionOnly: boolean }) => Promise<boolean>;
   clearConfigAction: () => void;
   testConnection: () => Promise<boolean>;
@@ -328,6 +367,8 @@ const AppContext = createContext<
     /** v6.1.1：待确认清单由 Provider 按当前记录实时核对派生（store/pendingChecks.ts） */
     conflicts: ConflictEntry[];
     suggestions: SuggestionEntry[];
+    /** v6.2：记录 ID → 所在计划清单 ID 集合（Provider 派生，筛选/详情共用） */
+    planMembers: Map<number, Set<string>>;
     actions: AppActions;
   }) | null
 >(null);
@@ -363,11 +404,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       schema: state.schema,
       baseSha: state.baseSha,
       lastSyncedAt: state.lastSyncedAt,
+      // v6.2：计划清单随数据缓存一并落本地（刷新/重开后保持一致）
+      plans: state.plans,
+      plansBaseSha: state.plansBaseSha,
+      plansDataVersion: state.plansDataVersion,
     });
     // 质检 P2-3：本地存储写失败（配额超限）必须让用户知道，不能静默失败
     const message = storageErrorNotice(outcome, '最新数据');
     if (message) dispatch({ type: 'SET_NOTICE', notice: message });
-  }, [state.records, state.schema, state.baseSha, state.dataVersion, state.lastSyncedAt]);
+  }, [state.records, state.schema, state.baseSha, state.dataVersion, state.lastSyncedAt, state.plans, state.plansBaseSha, state.plansDataVersion]);
 
   useEffect(() => {
     const outcome = writePending({ baseSha: state.baseSha, changes: state.pending });
@@ -482,6 +527,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         id,
         change: { id: `${id}-${Date.now()}`, 记录ID: id, 动作: '删除', 字段: [], 时间: now },
       });
+      // v6.2：顺带清理各计划清单里对这条记录的成员引用（清单本身不受影响）
+      const cleaned = prunePlanMembers(st.plans, [id]);
+      if (cleaned) {
+        const affected = st.plans.filter((p) => p.记录ID列表.includes(id));
+        dispatch({ type: 'SET_PLANS', plans: cleaned, changes: affected.map((p) => planChange(p.id, '编辑')) });
+      }
     };
 
     /**
@@ -507,6 +558,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           时间: now,
         })),
       });
+      // v6.2：被清理的空壳记录同样从计划清单成员里剔除
+      const cleanedPlans = prunePlanMembers(st.plans, shells.map((r) => r.id));
+      if (cleanedPlans) {
+        const affected = st.plans.filter((p) => shells.some((r) => p.记录ID列表.includes(r.id)));
+        dispatch({ type: 'SET_PLANS', plans: cleanedPlans, changes: affected.map((p) => planChange(p.id, '编辑')) });
+      }
       dispatch({
         type: 'SET_NOTICE',
         notice: `已清理 ${shells.length} 条名称为空的导入遗留记录，下次同步会写回仓库。`,
@@ -555,6 +612,65 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setIgnoredChecks([]);
     };
 
+    /* -------- v6.2（需求 1）：计划清单的增删改与成员维护 -------- */
+    /**
+     * 计划清单的待同步队列条目：记录 ID 固定 0（不指向任何记录），
+     * 字段[0] = '计划清单'、字段[1] = 清单 ID。作用有二：
+     *   ① 阻断启动自动拉取（decideAutoPull 按 pendingCount 判断）
+     *   ② 无基线快照时按「动过的清单」重建合并归属（plans.mergeWithoutBaseline）
+     */
+    const planChange = (planId: string, 动作: '新增' | '编辑' | '删除'): PendingChange => ({
+      id: `${planId}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      记录ID: 0,
+      动作,
+      字段: ['计划清单', planId],
+      时间: new Date().toISOString(),
+    });
+
+    const createPlanListAction = (name: string): string | null => {
+      const st = current();
+      const res = createPlanList(st.plans, name);
+      if (!res) {
+        dispatch({ type: 'SET_NOTICE', notice: '清单名称不能为空。' });
+        return null;
+      }
+      dispatch({ type: 'SET_PLANS', plans: res.plans, changes: [planChange(res.plan.id, '新增')] });
+      return res.plan.id;
+    };
+
+    const renamePlanListAction = (planId: string, name: string) => {
+      const st = current();
+      if (!st.plans.some((p) => p.id === planId)) return;
+      const trimmed = name.trim();
+      if (!trimmed) {
+        dispatch({ type: 'SET_NOTICE', notice: '清单名称不能为空。' });
+        return;
+      }
+      const plans = renamePlanList(st.plans, planId, trimmed);
+      if (plans === st.plans) return;
+      dispatch({ type: 'SET_PLANS', plans, changes: [planChange(planId, '编辑')] });
+    };
+
+    const deletePlanListAction = (planId: string) => {
+      const st = current();
+      if (!st.plans.some((p) => p.id === planId)) return;
+      // 删除清单只移除记录关联，绝不删除记录本身（v6.2 需求 1）
+      dispatch({ type: 'SET_PLANS', plans: deletePlanList(st.plans, planId), changes: [planChange(planId, '删除')] });
+    };
+
+    const toggleRecordInPlanAction = (planId: string, recordId: number) => {
+      const st = current();
+      if (!st.records.some((r) => r.id === recordId)) return;
+      const target = st.plans.find((p) => p.id === planId);
+      if (!target) return;
+      const inPlan = target.记录ID列表.includes(recordId);
+      const plans = inPlan
+        ? removeRecordFromPlan(st.plans, planId, recordId)
+        : addRecordToPlan(st.plans, planId, recordId);
+      if (plans === st.plans) return;
+      dispatch({ type: 'SET_PLANS', plans, changes: [planChange(planId, '编辑')] });
+    };
+
     const makeClient = (): GithubClient | null => {
       const st = current();
       if (!st.config) return null;
@@ -576,6 +692,119 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const parsed = JSON.parse(remoteSchema.content) as Partial<Schema>;
         dispatch({ type: 'SET_SCHEMA', schema: mergeSchema(DEFAULT_SCHEMA, parsed) });
       } catch { /* schema 取不到不阻断主流程，使用内置兜底 */ }
+    };
+
+    /**
+     * v6.2（需求 1）：拉取并合并远端计划清单。
+     * · 远端没有 plans.json（404）→ 保留本地清单，首次写回时创建该文件
+     * · 远端有 → 与本地做三方合并（基线 = iw.plansBaseline，缺失时按待同步队列归属）
+     * · 计划清单冲突不阻断记录主流程：合并结果优先保留本地，冲突以提示告知
+     *   （记录冲突走专门的冲突面板；清单是轻量聚合，单人使用场景下不值得打断整个同步）
+     */
+    const pullPlans = async (client: GithubClient, st: AppState) => {
+      let remoteSha: string;
+      let remoteParsed: { plans: PlanItem[]; dataVersion: number };
+      try {
+        const remote = await client.getFile(PLANS_FILE_PATH);
+        remoteSha = remote.sha;
+        remoteParsed = parsePlansFile(remote.content);
+      } catch (err) {
+        if (err instanceof GithubError && err.kind === 'notfound') return; // 远端尚无清单文件
+        throw err; // 其余错误（网络 / 鉴权）沿用外层记录同步的错误处理
+      }
+      const planRes = planPlansSync({
+        local: st.plans,
+        remote: remoteParsed.plans,
+        baseline: readPlansBaseline(),
+        pending: st.pending,
+      });
+      dispatch({
+        type: 'SET_PLANS',
+        plans: planRes.plans,
+        baseSha: remoteSha,
+        dataVersion: remoteParsed.dataVersion,
+      });
+      // 与记录基线同一纪律：只有「本地与远端完全一致」时基线才前移
+      if (plansEqual(planRes.plans, remoteParsed.plans)) {
+        writePlansBaseline(remoteParsed.plans);
+      }
+      if (planRes.conflicts.length) {
+        dispatch({
+          type: 'SET_NOTICE',
+          notice: `计划清单有 ${planRes.conflicts.length} 处与远端不一致，已保留本地版本，下次同步会写回。`,
+        });
+      }
+    };
+
+    /**
+     * v6.2（需求 1）：把计划清单写回远端（随 syncNow 一并执行）。
+     * · 远端 sha 与本地记录的不一致时先做三方合并（记录主流程同款守卫）
+     * · 写回前把成员引用裁剪到当前记录集合（记录已删的引用不落远端）
+     * · 本地与远端内容一致时不产生新版本（与记录写回的 AC-7 同口径）
+     */
+    const syncPlans = async (client: GithubClient, recordsForPrune: RecordItem[]): Promise<boolean> => {
+      const st = current();
+      let remoteSha: string | null = null;
+      let remotePlans: PlanItem[] = [];
+      let remoteDataVersion = 0;
+      try {
+        const remote = await client.getFile(PLANS_FILE_PATH);
+        remoteSha = remote.sha;
+        const parsed = parsePlansFile(remote.content);
+        remotePlans = parsed.plans;
+        remoteDataVersion = parsed.dataVersion;
+      } catch (err) {
+        if (!(err instanceof GithubError && err.kind === 'notfound')) {
+          const message = err instanceof GithubError ? err.message : '计划清单写回失败';
+          dispatch({ type: 'SET_SYNC', status: 'error', message });
+          recordAction('同步写回', '失败', `计划清单：${message}`);
+          return false;
+        }
+        // 远端尚无 plans.json → 首次写回时创建（putFile sha 传 null）
+      }
+
+      let plans = st.plans;
+      if (remoteSha !== null && remoteSha !== st.plansBaseSha) {
+        // 远端清单已被改动 → 基线三方合并（与记录写回同一守卫，P1-1）
+        const planRes = planPlansSync({
+          local: st.plans,
+          remote: remotePlans,
+          baseline: readPlansBaseline(),
+          pending: st.pending,
+        });
+        plans = planRes.plans;
+        if (planRes.conflicts.length) {
+          dispatch({
+            type: 'SET_NOTICE',
+            notice: `计划清单有 ${planRes.conflicts.length} 处与远端冲突，已按本地版本写回。`,
+          });
+        }
+      }
+
+      // 成员引用裁剪：记录已被删除的引用不写回远端
+      const recordIds = new Set(recordsForPrune.map((r) => r.id));
+      plans = plans.map((p) => {
+        const kept = p.记录ID列表.filter((id) => recordIds.has(id));
+        if (kept.length === p.记录ID列表.length) return p;
+        return { ...p, 记录ID列表: kept, 更新时间: new Date().toISOString() };
+      });
+
+      if (plansEqual(plans, remotePlans)) {
+        // 与远端一致：只对齐元数据与基线，不产生新版本
+        if (remoteSha !== null) {
+          dispatch({ type: 'SET_PLANS', plans: remotePlans, baseSha: remoteSha, dataVersion: remoteDataVersion });
+          writePlansBaseline(remotePlans);
+        }
+        return true;
+      }
+
+      const payload = makePlansFile(plans, remoteDataVersion + 1);
+      const message = `工作台计划清单 ${payload.dataVersion} · ${payload.totalCount} 份 · ${payload.updatedAt}`;
+      const result = await client.putFile(PLANS_FILE_PATH, JSON.stringify(payload, null, 2), remoteSha, message);
+      dispatch({ type: 'SET_PLANS', plans, baseSha: result.sha, dataVersion: payload.dataVersion });
+      writePlansBaseline(plans);
+      recordAction('同步写回', '成功', `已写入 ${payload.totalCount} 份计划清单（数据版本 ${payload.dataVersion}）`);
+      return true;
     };
 
     const pull = async (silent = false): Promise<boolean> => {
@@ -602,6 +831,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return false;
         }
         await loadSchemaAndConflicts(client);
+
+        // v6.2（需求 1）：计划清单拉取与三方合并（远端尚无 plans.json 时视为空清单，不阻断记录主流程）
+        await pullPlans(client, st);
 
         // 质检 P0-1 / P1-1 / P1-2 / P1-3：
         // 不再无条件用远端覆盖本地记录，而是基于「持久化基线快照」做真三方合并。
@@ -744,7 +976,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'SET_NOTICE', notice: '远端已是最新，本次没有需要写回的改动。' });
           dispatch({ type: 'SET_AUTO_PULL_BLOCK', blocked: false, message: null });
           recordAction('同步写回', '成功', '远端已是最新，无需写入');
-          return true;
+          // v6.2：记录无改动也要核对计划清单（可能只有清单改动）
+          return await syncPlans(client, records);
         }
 
         const payload = {
@@ -773,6 +1006,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'SET_NOTICE', notice: '已同步到 GitHub 仓库。' });
         dispatch({ type: 'SET_AUTO_PULL_BLOCK', blocked: false, message: null });
         recordAction('同步写回', '成功', `已写入 ${payload.recordCount} 条记录（数据版本 ${payload.dataVersion}）`);
+        // v6.2（需求 1）：记录写回成功后同步计划清单（失败时如实报错，记录已写回不受影响）
+        const plansOk = await syncPlans(client, records);
+        if (!plansOk) {
+          dispatch({ type: 'SET_NOTICE', notice: '记录已写回，但计划清单写回失败，请再次点「同步到 GitHub」重试。' });
+          return false;
+        }
         return true;
       } catch (err) {
         if (err instanceof GithubError && err.kind === 'conflict') {
@@ -935,7 +1174,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (scope === 'all') return st.records;
       // 质检 P2-1：导出与列表必须同口径 —— 同一套筛选、同一套搜索、同一排序。
       // 原来这里用的是一套简化版 includes 匹配，与列表页的索引搜索结果对不上。
-      const list = applyQuery(st.records, st.filters, st.query, st.indexes);
+      // v6.2：按计划清单筛选的口径也一并对齐（导出结果与列表一致）。
+      const list = applyQuery(st.records, st.filters, st.query, st.indexes, buildPlanMembers(st.plans));
       return sortRecords(list, st.sort);
     };
 
@@ -992,6 +1232,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ignoreAllChecks,
       restoreIgnoredCheck,
       restoreAllIgnoredChecks,
+      createPlanList: createPlanListAction,
+      renamePlanList: renamePlanListAction,
+      deletePlanList: deletePlanListAction,
+      toggleRecordInPlan: toggleRecordInPlanAction,
       saveConfig,
       clearConfigAction,
       testConnection,
@@ -1011,15 +1255,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
    * 用户修复记录后条目自动消失；全部处理完（或全部忽略）横幅不显示。 */
   const pendingChecks = useMemo(() => computePendingChecks(state.records), [state.records]);
 
+  /* -------- v6.2（需求 1）：计划清单成员索引（列表筛选 / 详情展示共用派生） -------- */
+  const planMembers = useMemo(() => buildPlanMembers(state.plans), [state.plans]);
+
   const value = useMemo(
     () => ({
       ...state,
       conflicts: pendingChecks.conflicts,
       suggestions: pendingChecks.suggestions,
+      planMembers,
       actions,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state, pendingChecks, version],
+    [state, pendingChecks, planMembers, version],
   );
 
   /* -------- 启动时自动拉取（质检 P0-1） -------- */

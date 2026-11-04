@@ -106,6 +106,37 @@ export interface RecordsFile {
   records: RecordItem[];
 }
 
+/* ------------------------------ 计划清单（v6.2） ------------------------------ */
+
+/**
+ * v6.2（需求 1）：可自建的计划清单。
+ *
+ *   · 清单定义与成员关系都存在数据仓的 data/plans.json（独立文件，不动 records.json）；
+ *   · 「成员关系」以记录 ID 列表挂在清单上 —— 记录本身不新增任何字段，
+ *     删除清单只是删掉清单定义（关联随之消失），绝不删除记录本身；
+ *   · 与「状态及评价」里的「计划」枚举（在计划中 / 不是现在 等）完全独立、互不影响；
+ *     既有「计划」枚举取值不做任何迁移或合并，由用户自行取舍。
+ */
+export interface PlanItem {
+  /** 清单唯一标识（本地生成，形如 p-xxxx，跨设备不会碰撞） */
+  id: string;
+  /** 清单名称（如「2026 春季」「给宝宝做的」） */
+  名称: string;
+  /** 加入本清单的记录 ID 列表（升序去重） */
+  记录ID列表: number[];
+  创建时间: string;
+  更新时间: string;
+}
+
+/** 数据仓 data/plans.json 的文件结构 */
+export interface PlansFile {
+  schemaVersion: number;
+  dataVersion: number;
+  updatedAt: string;
+  totalCount?: number;
+  plans: PlanItem[];
+}
+
 /* ------------------------------ 筛选与搜索 ------------------------------ */
 
 /** 布尔字段的三态筛选：undefined = 不限 */
@@ -130,6 +161,12 @@ export interface Filters {
    * 取值：「电子版」「纸质版」；另设保留值「任意拥有」＝拥有形态非空。
    */
   拥有形态: string[];
+  /**
+   * v6.2（需求 1）：按计划清单筛选。取值为清单 ID（PlanItem.id），
+   * 多选语义 = 命中任一清单即返回（与品牌 / 分类的字段内 OR 一致）。
+   * 清单本身的数据不进 Filters，由 AppState.plans 提供（见 store/plans.ts）。
+   */
+  计划清单: string[];
   做过: BoolFilter;
 }
 
@@ -143,6 +180,7 @@ export const EMPTY_FILTERS: Filters = {
   计划: [],
   电子版尺码: [],
   拥有形态: [],
+  计划清单: [],
   做过: undefined,
 };
 

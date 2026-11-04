@@ -27,6 +27,8 @@ interface Props {
   onApplyPreset: (id: string) => void;
   onSavePreset: (name: string) => void;
   onDeletePreset: (id: string) => void;
+  /** v6.2（需求 1）：可选中的计划清单（value = 清单 ID，展示为清单名称） */
+  plans?: Array<{ id: string; name: string }>;
 }
 
 function optionsOf(schema: Schema, key: string): string[] {
@@ -34,7 +36,7 @@ function optionsOf(schema: Schema, key: string): string[] {
 }
 
 export function FilterPanel(props: Props) {
-  const { filters, schema, onChange, onClear, presets, onApplyPreset, onSavePreset, onDeletePreset } = props;
+  const { filters, schema, onChange, onClear, presets, onApplyPreset, onSavePreset, onDeletePreset, plans } = props;
   const [open, setOpen] = useState(false);
   const [presetName, setPresetName] = useState('');
 
@@ -180,6 +182,32 @@ export function FilterPanel(props: Props) {
             <div>
               <div className="iw-filter-block-title">拥有形态</div>
               {chips('拥有形态', ownershipFilterOptions, '拥有形态')}
+            </div>
+            {/* v6.2（需求 1）：按计划清单筛选 —— value 为清单 ID，OR 语义 */}
+            <div>
+              <div className="iw-filter-block-title">计划清单</div>
+              {plans && plans.length ? (
+                <div className="iw-chip-group">
+                  {plans.map((plan) => {
+                    const list = (filters.计划清单 as string[]) ?? [];
+                    const on = list.includes(plan.id);
+                    return (
+                      <button
+                        key={plan.id}
+                        type="button"
+                        className={`iw-chip${on ? ' iw-chip-on' : ''}`}
+                        onClick={() => toggleMulti('计划清单', plan.id)}
+                        aria-pressed={on}
+                        aria-label={`计划清单：${plan.name}`}
+                      >
+                        {plan.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="iw-cell-muted">还没有计划清单（可在「设置 › 计划清单」创建）</div>
+              )}
             </div>
             {boolGroup('做过', '做过')}
           </div>

@@ -26,6 +26,7 @@ const holder = vi.hoisted(() => ({
 vi.mock('../store/store', () => ({
   useApp: () => ({
     records: [],
+    plans: [],
     schema: DEFAULT_SCHEMA,
     config: null,
     connection: 'idle',
@@ -58,6 +59,10 @@ vi.mock('../store/store', () => ({
       ignoreAllChecks: vi.fn(),
       restoreIgnoredCheck: holder.restoreIgnoredCheck,
       restoreAllIgnoredChecks: holder.restoreAllIgnoredChecks,
+      createPlanList: vi.fn(() => 'p1'),
+      renamePlanList: vi.fn(),
+      deletePlanList: vi.fn(),
+      toggleRecordInPlan: vi.fn(),
     },
   }),
 }));

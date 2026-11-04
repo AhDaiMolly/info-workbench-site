@@ -90,6 +90,7 @@ function apiPayload(name, buf) {
 
   const recordsBuf = fs.readFileSync(path.join(DATA_DIR, RECORDS_FILE));
   const schemaBuf = fs.readFileSync(path.join(DATA_DIR, SCHEMA_FILE));
+  const plansBuf = fs.readFileSync(path.join(DATA_DIR, 'plans.v62.json'));
   // 全部记录：断言一律锚定到当前数据，避免线上数据演进后出现假失败
   const allFile = JSON.parse(recordsBuf.toString('utf8'));
   // 与产品代码 src/store/selectors.ts 的排序比较器保持一致
@@ -98,8 +99,10 @@ function apiPayload(name, buf) {
   // 拦截期间对外返回的文件（阶段 B 会换成「脏数据」版本）
   let servedRecords = recordsBuf;
   let servedSchema = schemaBuf;
+  let servedPlans = plansBuf;
   let putCount = 0;
   const putBodies = [];
+  const putUrls = [];
   const apiHits = [];
 
   try {
@@ -125,7 +128,7 @@ function apiPayload(name, buf) {
         }
         if (req.method() === 'PUT') {
           putCount += 1;
-          try { putBodies.push(req.postData() || ''); } catch (e) { putBodies.push(''); }
+          try { putBodies.push(req.postData() || ''); putUrls.push(url); } catch (e) { putBodies.push(''); putUrls.push(url); }
           apiHits.push(`PUT ${url.replace(/https:\/\/api\.github\.com/, '')}`);
           return req.respond({
             status: 200,
@@ -141,6 +144,10 @@ function apiPayload(name, buf) {
         if (url.includes('schema.json')) {
           apiHits.push(`GET ${url.replace(/https:\/\/api\.github\.com/, '')}`);
           return req.respond({ status: 200, headers: CORS_HEADERS, contentType: 'application/json', body: apiPayload('schema.json', servedSchema) });
+        }
+        if (url.includes('plans.json')) {
+          apiHits.push(`GET ${url.replace(/https:\/\/api\.github\.com/, '')}`);
+          return req.respond({ status: 200, headers: CORS_HEADERS, contentType: 'application/json', body: apiPayload('plans.json', servedPlans) });
         }
         // 仓库元信息（连通性检测）—— 返 200，避免浏览器把 404 记成控制台错误
         apiHits.push(`GET ${url.replace(/https:\/\/api\.github\.com/, '')}`);
@@ -558,7 +565,7 @@ function apiPayload(name, buf) {
       };
     });
     record('v6-1 设置页展示「版本信息」卡片（版本号/构建日期/提交）',
-      verInfo.hasCard && verInfo.bodyHasFields && verInfo.text.includes('v6.1.1'),
+      verInfo.hasCard && verInfo.bodyHasFields && verInfo.text.includes('v6.2.0'),
       verInfo.hasCard ? `版本文本：${verInfo.text}` : '未找到版本信息卡片');
 
     // 样本：仅勾选「电子版」且有备注的记录（从当前数据里挑）
@@ -943,6 +950,125 @@ function apiPayload(name, buf) {
       `被删记录「${firstRowName}」${tableTextAfter.includes(firstRowName) ? '仍在表格中' : '已从表格移除'}`);
     const noTrash = await bodyText();
     record('v4 页面无「回收站」入口', !noTrash.includes('回收站'), '未出现');
+
+
+    /* ---------------- v6.2 计划清单 + 身高码（浏览器逐项验证） ---------------- */
+    // 需求 1：创建清单 → 记录加入清单 → 按清单筛选 → 刷新后仍在 → 同步写回 plans.json
+    await goto('#/settings');
+    const planInputOk = await page.evaluate(() => !!document.querySelector('[data-testid="iw-new-plan-name"]'));
+    record('v6.2-1 设置页有「计划清单」管理区（新建输入框存在）', planInputOk, planInputOk ? '找到新建输入框' : '未找到');
+    if (planInputOk) {
+      await page.focus('[data-testid="iw-new-plan-name"]');
+      await page.keyboard.type('2026 春季');
+      await new Promise((r) => setTimeout(r, 200));
+      await page.click('[data-testid="iw-new-plan-submit"]');
+      await new Promise((r) => setTimeout(r, 500));
+      const plansAfterCreate = await page.evaluate(() => Array.from(document.querySelectorAll('[data-testid="iw-plan-row"]'))
+        .map((el) => (el.textContent || '').trim()));
+      record('v6.2-2 新建清单「2026 春季」出现在设置页清单列表', plansAfterCreate.some((t) => t.includes('2026 春季') && t.includes('0 条')),
+        plansAfterCreate.join(' / ') || '清单列表为空');
+
+      // 把一条真实记录加入清单（详情页计划清单卡片 chip）
+      const joinTarget = allFile.records.find((r) => String(r['名称'] || '').trim());
+      await goto(`#/detail/${joinTarget.id}`);
+      const chipSel = '[data-testid="iw-plan-chips"] button';
+      const chipOk = await waitFor(async () => (await page.evaluate((c) => document.querySelectorAll(c).length, chipSel)) > 0, 5000);
+      if (chipOk) {
+        const joined = await page.evaluate((sel) => {
+          const btn = Array.from(document.querySelectorAll(sel)).find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+          if (!btn) return false;
+          btn.click();
+          return true;
+        }, chipSel);
+        await new Promise((r) => setTimeout(r, 700));
+        const planCard = await page.evaluate(() => {
+          const card = document.querySelector('[data-testid="iw-plan-card"]');
+          return card ? card.textContent || '' : '';
+        });
+        record('v6.2-3 详情页把记录加入「2026 春季」（chip 已选中、计数 1 条）',
+          joined && planCard.includes('2026 春季（1）') && planCard.includes('当前共在 1 份清单里'),
+          `卡片内容：${planCard.slice(0, 80)}`);
+
+        // 列表页按计划清单筛选
+        await goto('#/list');
+        await clickByText('筛选条件');
+        await new Promise((r) => setTimeout(r, 500));
+        await page.evaluate(() => {
+          const btn = Array.from(document.querySelectorAll('.iw-filter-panel button'))
+            .find((b) => (b.getAttribute('aria-label') || '').includes('计划清单：2026 春季'));
+          if (btn) btn.click();
+        });
+        await new Promise((r) => setTimeout(r, 900));
+        const filteredRows = await page.evaluate(() => document.querySelectorAll('.iw-table tbody tr').length);
+        record('v6.2-4 按清单筛选后列表只含该记录', filteredRows === 1, `筛选后行数 ${filteredRows}（期望 1）`);
+
+        // 刷新后成员关系仍在（本地缓存持久化；URL→store 单向同步是全应用既有行为，
+        // 筛选状态本身不随 hash 走，故在详情页验证清单成员关系刷新后保持）
+        await page.reload({ waitUntil: 'networkidle2' });
+        await new Promise((r) => setTimeout(r, 900));
+        await goto(`#/detail/${joinTarget.id}`);
+        const membershipAfterReload = await page.evaluate(() => {
+          const btn = Array.from(document.querySelectorAll('[data-testid="iw-plan-chips"] button'))
+            .find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+          return btn ? btn.getAttribute('aria-pressed') === 'true' : false;
+        });
+        record('v6.2-5 刷新后计划清单成员关系保持（详情页 chip 仍选中）', membershipAfterReload,
+          membershipAfterReload ? `#${joinTarget.id} 仍在「2026 春季」里` : '刷新后成员关系丢失');
+        await goto('#/list');
+
+        // 同步写回 plans.json（PUT 拦截）
+        await goto('#/settings');
+        const putBeforePlans = putCount;
+        await clickByText('同步到 GitHub', '.iw-main');
+        await waitFor(async () => putCount > putBeforePlans, 12000);
+        let plansPutOk = false;
+        let plansPutMsg = '未捕获 plans.json PUT';
+        for (let i = 0; i < putUrls.length; i += 1) {
+          if (!putUrls[i].includes('plans.json')) continue;
+          try {
+            const body = JSON.parse(putBodies[i] || '{}');
+            const decoded = JSON.parse(Buffer.from(body.content || '', 'base64').toString('utf8'));
+            if (decoded.plans && decoded.plans.some((pl) => pl['名称'] === '2026 春季' && (pl['记录ID列表'] || []).includes(joinTarget.id))) {
+              plansPutOk = true;
+              plansPutMsg = `写回 plans.json dataVersion=${decoded.dataVersion}，含「2026 春季」与成员 #${joinTarget.id}`;
+            }
+          } catch (e) { /* skip */ }
+        }
+        record('v6.2-6 同步把计划清单写回数据仓（PUT plans.json 含清单与成员）', plansPutOk, plansPutMsg);
+      } else {
+        record('v6.2-3 详情页计划清单 chip 存在', false, '未找到清单 chip');
+      }
+    }
+
+    // 需求 2：身高码新选项与顺序（编辑页快捷标签）
+    await goto('#/editor/new');
+    const heightOk = await page.evaluate(() => {
+      const groups = Array.from(document.querySelectorAll('.iw-detail-group-title')).map((el) => el.textContent || '');
+      return groups.includes('拥有形态');
+    });
+    if (heightOk) {
+      // 先勾选「纸质版」（v6 形态-尺码联动：未勾不展示纸质版尺码快捷标签）
+      const paperClicked = await page.evaluate(() => {
+        const group = document.querySelector('[role="group"][aria-label="拥有形态"]');
+        if (!group) return 'no-group';
+        const chip = Array.from(group.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '纸质版');
+        if (!chip) return 'no-chip';
+        chip.click();
+        return 'clicked';
+      });
+      await new Promise((r) => setTimeout(r, 800));
+      const heightTags = await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll('button'))
+          .filter((b) => (b.getAttribute('aria-label') || '').includes('纸质版尺码 快捷身高码'));
+        return btns.map((b) => (b.textContent || '').trim());
+      });
+      const expected = ['80', '90', '100', '110', '120', '130', '140', '150', '155', '160', '165', '170', '180'];
+      const inOrder = heightTags.length === expected.length && heightTags.every((t, i) => t === expected[i]);
+      record('v6.2-7 编辑页身高码含新增 80/90/155/165 且顺序为数值升序', inOrder && paperClicked === 'clicked',
+        `勾选结果 ${paperClicked}，标签 ${heightTags.length} 项：${heightTags.join('、').slice(0, 90)}`);
+    } else {
+      record('v6.2-7 编辑页身高码（表单分区存在）', false, '编辑页分区缺失');
+    }
 
     /* ---------------- 阶段 B：第 1 条修复后的写回校验行为 ---------------- */
     const v4File = JSON.parse(recordsBuf.toString('utf8'));

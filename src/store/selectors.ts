@@ -20,6 +20,7 @@
  */
 
 import type { Filters, RecordItem, SortSpec } from '../types';
+import type { PlanItem } from '../types';
 import {
   CATEGORY_ORDER, OWNERSHIP_ANY, SIZE_GROUP_ORDER, LEGACY_ESIZE_GROUP_MAP,
 } from '../schema';
@@ -131,8 +132,11 @@ export function expandEsizeFilterValues(values: string[]): string[] {
   return [...new Set(out)];
 }
 
+/** 记录 ID → 所在清单 ID 集合（按计划清单筛选时由调用方随筛选条件传入） */
+export type PlanMembers = Map<number, Set<string>>;
+
 /** 判断单条记录是否命中全部筛选条件 */
-export function matchesFilters(r: RecordItem, f: Filters): boolean {
+export function matchesFilters(r: RecordItem, f: Filters, planMembers?: PlanMembers): boolean {
   if (f.品牌.length && !f.品牌.includes(r.品牌 ?? '')) return false;
   if (f.款式.length && !f.款式.includes(r.款式 ?? '')) return false;
   if (f.季节.length && !f.季节.includes(r.季节 ?? '')) return false;
@@ -141,6 +145,11 @@ export function matchesFilters(r: RecordItem, f: Filters): boolean {
   if (f.计划.length && !f.计划.includes(r.计划 ?? '')) return false;
   // 分类：命中任一选项即返回
   if (f.分类.length && !(r.分类 ?? []).some((c) => f.分类.includes(c))) return false;
+  // v6.2（需求 1）：计划清单筛选 —— 语义为 OR（命中任一选中清单即返回），与品牌/分类一致
+  if (f.计划清单.length) {
+    const member = planMembers?.get(r.id);
+    if (!member || !f.计划清单.some((planId) => member.has(planId))) return false;
+  }
   // v6.1（需求 3）：电子版尺码按标签匹配；旧「尺码组」取值展开为全码要求
   if (f.电子版尺码.length) {
     const esize = r.电子版尺码 ?? [];
@@ -167,15 +176,15 @@ export function hasActiveFilters(f: Filters): boolean {
   return Boolean(
     f.品牌.length || f.分类.length || f.款式.length || f.季节.length || f.教程.length
     || f.推荐.length || f.计划.length || f.电子版尺码.length
-    || f.拥有形态.length
+    || f.拥有形态.length || f.计划清单.length
     || f.做过 !== undefined,
   );
 }
 
 /** 筛选（不含搜索） */
-export function filterRecords(records: RecordItem[], f: Filters): RecordItem[] {
+export function filterRecords(records: RecordItem[], f: Filters, planMembers?: PlanMembers): RecordItem[] {
   if (!hasActiveFilters(f)) return records;
-  return records.filter((r) => matchesFilters(r, f));
+  return records.filter((r) => matchesFilters(r, f, planMembers));
 }
 
 /* -------------------------------- 搜索 -------------------------------- */
@@ -227,8 +236,10 @@ function intersect(a: number[], b: number[]): number[] {
 }
 
 /** 筛选 + 搜索叠加 */
-export function applyQuery(records: RecordItem[], f: Filters, query: string, idx?: Indexes): RecordItem[] {
-  const filtered = filterRecords(records, f);
+export function applyQuery(
+  records: RecordItem[], f: Filters, query: string, idx?: Indexes, planMembers?: PlanMembers,
+): RecordItem[] {
+  const filtered = filterRecords(records, f, planMembers);
   const q = String(query ?? '').trim();
   if (!q) return filtered;
   const hits = new Set(searchIds(filtered, q, idx));

@@ -113,4 +113,24 @@ describe('hash 路由构造与往返', () => {
   it('页码为 1 时不写入参数', () => {
     expect(buildHash({ view: 'list', page: 1 })).toBe('#/list');
   });
+
+  it('v6.2：计划清单筛选（plist）往返一致', () => {
+    const original = {
+      view: 'list' as const,
+      filters: filters({ 计划清单: ['p1', 'p2'] }),
+      query: '',
+      sort: { key: '名称' as const, dir: 'asc' as const },
+      page: 1,
+    };
+    const hash = buildHash(original);
+    expect(hash).toContain('plist=p1%7Ep2');
+    const back = parseHash(hash);
+    expect(back.filters.计划清单).toEqual(['p1', 'p2']);
+  });
+
+  it('v6.2：plist 参数单独出现时不影响其他筛选', () => {
+    const r = parseHash('#/list?plist=p3');
+    expect(r.filters.计划清单).toEqual(['p3']);
+    expect(r.filters.品牌).toEqual([]);
+  });
 });

@@ -173,6 +173,16 @@ describe('GithubClient 写回（乐观锁）', () => {
     await expect(client.putFile('data/records.json', '{}', '', 'msg')).rejects.toBeInstanceOf(GithubError);
     expect(calls.length).toBe(1);
   });
+
+  it('v6.2：sha=null 表示新建文件，请求体不携带 sha 字段（plans.json 首次写回）', async () => {
+    const { client, calls } = makeClient(() =>
+      jsonResponse(200, { content: { sha: 'fresh-sha' }, commit: { sha: 'c1' } }));
+    const res = await client.putFile('data/plans.json', '{"plans":[]}', null, '新建计划清单');
+    expect(res.sha).toBe('fresh-sha');
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect('sha' in body).toBe(false);
+    expect(fromBase64(body.content)).toBe('{"plans":[]}');
+  });
 });
 
 describe('重试与降级', () => {

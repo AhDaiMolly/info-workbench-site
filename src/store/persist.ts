@@ -1,7 +1,7 @@
 /**
  * 信息汇总工作台 · 浏览器本地存储（架构 4.3 / 4.5）
  *
- * 九个键（ARCH L3 层）：
+ * 十个键（ARCH L3 层）：
  *   iw.config   连接配置（仓库 + 令牌）——令牌只在发起 API 请求时读取，不进全局状态
  *   iw.cache    本地数据缓存（记录 + schema + 基线 sha + dataVersion）
  *   iw.pending  离线暂存队列（未同步改动）
@@ -11,11 +11,12 @@
  *   iw.actionlog 同步 / 备份操作日志（v4：只保留最近 3 条）
  *   iw.maxid    记录 ID 发号水位（v4：保证删除记录后 ID 不复用）
  *   iw.ignoredChecks 已忽略的待确认项（v6.1.1：单人使用，只存浏览器本地）
+ *   iw.plansBaseline 上次成功同步时的计划清单快照 —— plans.json 三方合并的基线（v6.2）
  *
  * ⚠️ 令牌永不写入 URL / 日志 / commit message / 导出文件 / 构建产物。
  */
 
-import type { ActionLogEntry, FilterPreset, Filters, RecordItem, RepoConfig, Schema, SortSpec } from '../types';
+import type { ActionLogEntry, FilterPreset, Filters, PlanItem, RecordItem, RepoConfig, Schema, SortSpec } from '../types';
 import type { IgnoredCheckEntry } from './pendingChecks';
 import { LEGACY_FIELD_ALIAS, REMOVED_FIELD_KEYS } from '../schema';
 
@@ -30,6 +31,8 @@ export const STORAGE_KEYS = {
   maxid: 'iw.maxid',
   /** v6.1.1：待确认清单的「已忽略项」（单人使用，浏览器本地持久化即可） */
   ignoredChecks: 'iw.ignoredChecks',
+  /** v6.2：计划清单的同步基线快照（plans.json 三方合并基线） */
+  plansBaseline: 'iw.plansBaseline',
 } as const;
 
 /** v4：操作日志最多保留的条数 */
@@ -149,6 +152,12 @@ export interface CachedData {
   schema: Schema | null;
   baseSha: string | null;
   lastSyncedAt: string | null;
+  /** v6.2：计划清单本地缓存（无则视为空） */
+  plans?: PlanItem[] | null;
+  /** v6.2：plans.json 的远端 sha（null = 远端尚无该文件） */
+  plansBaseSha?: string | null;
+  /** v6.2：plans.json 的数据版本 */
+  plansDataVersion?: number;
 }
 
 export function readCache(): CachedData | null {
@@ -180,6 +189,25 @@ export function writeBaseline(records: RecordItem[]): WriteOutcome {
 
 export function clearBaseline(): void {
   removeKey(STORAGE_KEYS.baseline, safeStorage('local'));
+}
+
+/* ------------------- 计划清单同步基线（v6.2） ------------------- */
+
+/**
+ * 上次成功同步（拉取或写回）时的计划清单快照 —— plans.json 三方合并的基线。
+ * 与记录基线（iw.baseline）同一模式：缺了它只能按待同步队列归属做两方合并。
+ */
+export function readPlansBaseline(): PlanItem[] | null {
+  const raw = readJson<PlanItem[]>(STORAGE_KEYS.plansBaseline, safeStorage('local'));
+  return Array.isArray(raw) ? raw : null;
+}
+
+export function writePlansBaseline(plans: PlanItem[]): WriteOutcome {
+  return writeJson(STORAGE_KEYS.plansBaseline, plans, safeStorage('local'));
+}
+
+export function clearPlansBaseline(): void {
+  removeKey(STORAGE_KEYS.plansBaseline, safeStorage('local'));
 }
 
 /* ------------------------------ 待同步队列 ------------------------------ */

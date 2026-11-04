@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CATEGORY_ORDER, DEFAULT_SCHEMA, DEFAULT_VISIBLE_COLUMNS, DERIVED_LIST_COLUMNS, FIELD_DEFAULTS,
-  OWNERSHIP_ANY, OWNERSHIP_FORMAT_OPTIONS, OWNERSHIP_FILTER_OPTIONS, OWNERSHIP_TRISTATE_OPTIONS,
+  LEGACY_ESIZE_GROUP_MAP, OWNERSHIP_ANY, OWNERSHIP_FORMAT_OPTIONS, OWNERSHIP_FILTER_OPTIONS, OWNERSHIP_TRISTATE_OPTIONS,
   PAPER_SIZE_HEIGHT_TAGS, PAPER_SIZE_LETTER_TAGS, REMOVED_FIELD_KEYS,
   SEASON_OPTIONS, defaultValueFor, mergeSchema, stripLegacyOptions,
 } from '../schema';
@@ -105,13 +105,23 @@ describe('v5 · R4 纸质版尺码快捷标签', () => {
     expect(PAPER_SIZE_LETTER_TAGS).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
   });
 
-  it('身高码 100–180 步长 10', () => {
-    expect(PAPER_SIZE_HEIGHT_TAGS[0]).toBe('100');
-    expect(PAPER_SIZE_HEIGHT_TAGS[PAPER_SIZE_HEIGHT_TAGS.length - 1]).toBe('180');
-    expect(PAPER_SIZE_HEIGHT_TAGS.length).toBe(9);
+  it('身高码 v6.2 新增 80/90/155/165，共 13 项且严格升序', () => {
+    expect(PAPER_SIZE_HEIGHT_TAGS).toEqual([
+      '80', '90', '100', '110', '120', '130', '140', '150', '155', '160', '165', '170', '180',
+    ]);
     for (let i = 1; i < PAPER_SIZE_HEIGHT_TAGS.length; i += 1) {
-      expect(Number(PAPER_SIZE_HEIGHT_TAGS[i]) - Number(PAPER_SIZE_HEIGHT_TAGS[i - 1])).toBe(10);
+      expect(Number(PAPER_SIZE_HEIGHT_TAGS[i]) - Number(PAPER_SIZE_HEIGHT_TAGS[i - 1])).toBeGreaterThan(0);
     }
+  });
+
+  it('旧「大小童全码」展开仍钉在 v6.1 的 9 个身高码，不纳入新码', () => {
+    const group = LEGACY_ESIZE_GROUP_MAP['大小童全码'];
+    expect(group).toBeDefined();
+    expect(group).toEqual(['100', '110', '120', '130', '140', '150', '160', '170', '180']);
+    expect(group).not.toContain('80');
+    expect(group).not.toContain('90');
+    expect(group).not.toContain('155');
+    expect(group).not.toContain('165');
   });
 });
 

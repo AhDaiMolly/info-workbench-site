@@ -194,6 +194,13 @@
 
 .iw-chip-group { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* v6.2（需求 1）：计划清单管理区 */
+.iw-plan-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%; }
+.iw-plan-name { font-weight: 500; }
+.iw-plan-count { color: var(--iw-text-tertiary, #8a8f99); font-weight: 400; font-size: 12px; }
+.iw-inline-form { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.iw-inline-form .iw-input { flex: 1; min-width: 200px; }
+
 .iw-chip {
   border: 1px solid var(--iw-border-strong);
   background: #fff;

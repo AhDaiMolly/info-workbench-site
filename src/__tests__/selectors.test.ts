@@ -363,3 +363,44 @@ describe('v6.1 · 需求 3 旧尺码组筛选值扩展（expandEsizeFilterValues
     expect(out).toContain('4XL');
   });
 });
+
+
+describe('v6.2 · 计划清单筛选', () => {
+  const planMembers = new Map<number, Set<string>>([
+    [1, new Set(['p1'])],
+    [2, new Set(['p1', 'p2'])],
+    [3, new Set(['p2'])],
+  ]);
+
+  it('按单个清单筛选：只保留该清单成员', () => {
+    const f: Filters = { ...EMPTY_FILTERS, 计划清单: ['p1'] };
+    const out = sample.filter((r) => matchesFilters(r, f, planMembers));
+    expect(out.map((r) => r.id)).toEqual([1, 2]);
+  });
+
+  it('多清单为 OR 语义：任一命中即保留', () => {
+    const f: Filters = { ...EMPTY_FILTERS, 计划清单: ['p1', 'p2'] };
+    expect(sample.filter((r) => matchesFilters(r, f, planMembers)).map((r) => r.id)).toEqual([1, 2, 3]);
+  });
+
+  it('不在任何清单的记录被过滤；无成员信息的记录同样被过滤', () => {
+    const f: Filters = { ...EMPTY_FILTERS, 计划清单: ['p404'] };
+    expect(sample.filter((r) => matchesFilters(r, f, planMembers))).toEqual([]);
+  });
+
+  it('不传 planMembers 时按清单筛选视为无命中（防御）', () => {
+    const f: Filters = { ...EMPTY_FILTERS, 计划清单: ['p1'] };
+    expect(sample.filter((r) => matchesFilters(r, f))).toEqual([]);
+  });
+
+  it('applyQuery 组合：计划清单与品牌筛选 AND 生效', () => {
+    const f: Filters = { ...EMPTY_FILTERS, 计划清单: ['p1'], 品牌: ['品牌乙'] };
+    const out = applyQuery(sample, f, '', undefined, planMembers);
+    expect(out.map((r) => r.id)).toEqual([2]);
+  });
+
+  it('未选清单时不影响 hasActiveFilters / 全量返回', () => {
+    const f: Filters = { ...EMPTY_FILTERS };
+    expect(applyQuery(sample, f, '', undefined, planMembers)).toHaveLength(sample.length);
+  });
+});

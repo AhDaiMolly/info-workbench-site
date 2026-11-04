@@ -43,6 +43,7 @@ let records: RecordItem[] = [];
 vi.mock('../store/store', () => ({
   useApp: () => ({
     records,
+    plans: [],
     schema: DEFAULT_SCHEMA,
     filters: {
       品牌: [], 分类: [], 款式: [], 季节: [], 教程: [], 推荐: [], 计划: [],
@@ -54,6 +55,7 @@ vi.mock('../store/store', () => ({
     actions: {
       addRecord: addRecordMock,
       updateRecord: updateRecordMock,
+      toggleRecordInPlan: vi.fn(),
     },
   }),
 }));
@@ -68,6 +70,8 @@ import { EditorForm } from '../features/editor/EditorForm';
 import { DetailView } from '../features/detail/DetailView';
 
 const SECTION_TITLES = ['基础信息', '拥有形态', '状态及评价', '备注', '系统信息'];
+// v6.2（需求 1）：详情页在五分区之后额外渲染「计划清单」卡片
+const DETAIL_SECTION_TITLES = [...SECTION_TITLES, '计划清单'];
 
 beforeEach(() => {
   cleanup();
@@ -203,14 +207,14 @@ describe('v5 · R4 纸质版尺码快捷标签', () => {
     expect(groups[1].querySelector('.iw-quick-tags-label')?.textContent).toBe('身高码');
   });
 
-  it('字母码覆盖 XS–4XL，身高码覆盖 100–180 步长 10', () => {
+  it('字母码覆盖 XS–4XL，身高码 v6.2 扩为 80–180（含 80/90/155/165）', () => {
     const { container } = render(<EditorForm recordId={7} />);
     enableOwnership(container, '纸质版');
     const groups = Array.from(sizeField(container, '纸质版尺码').querySelectorAll('.iw-quick-tags'));
     const letters = Array.from(groups[0].querySelectorAll('button')).map((b) => b.textContent);
     expect(letters).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
     const heights = Array.from(groups[1].querySelectorAll('button')).map((b) => b.textContent);
-    expect(heights).toEqual(['100', '110', '120', '130', '140', '150', '160', '170', '180']);
+    expect(heights).toEqual(['80', '90', '100', '110', '120', '130', '140', '150', '155', '160', '165', '170', '180']);
   });
 
   it('点选快捷标签即填入，再点一次取消', () => {
@@ -303,10 +307,10 @@ describe('v6 · 需求 3 形态-尺码联动', () => {
 });
 
 describe('记录详情：五分区版面', () => {
-  it('按同样五个分区渲染', () => {
+  it('按同样五个分区渲染（v6.2 起详情页追加「计划清单」卡片）', () => {
     render(<DetailView id={7} />);
     const titles = Array.from(document.querySelectorAll('.iw-detail-group-title')).map((el) => el.textContent);
-    expect(titles).toEqual(SECTION_TITLES);
+    expect(titles).toEqual(DETAIL_SECTION_TITLES);
   });
 
   it('展示 v5 字段名「拥有形态」与取值', () => {

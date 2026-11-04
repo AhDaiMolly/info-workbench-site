@@ -10,6 +10,7 @@ import { BUILD_INFO } from '../version';
 vi.mock('../store/store', () => ({
   useApp: () => ({
     records: [],
+    plans: [],
     schema: DEFAULT_SCHEMA,
     config: null,
     connection: 'idle',
@@ -29,6 +30,10 @@ vi.mock('../store/store', () => ({
       exportXlsx: vi.fn(),
       cleanupShellRecords: vi.fn(),
       setBackupInterval: vi.fn(),
+      createPlanList: vi.fn(() => 'p1'),
+      renamePlanList: vi.fn(),
+      deletePlanList: vi.fn(),
+      toggleRecordInPlan: vi.fn(),
     },
   }),
 }));

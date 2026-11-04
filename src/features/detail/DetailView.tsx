@@ -28,6 +28,9 @@ export function DetailView({ id }: { id: number | null }) {
     );
   }
 
+  /* v6.2（需求 1）：这条记录所在的计划清单（点击开关成员关系） */
+  const inPlans = app.plans.filter((p) => p.记录ID列表.includes(record.id));
+
   const renderValue = (key: string): JSX.Element => {
     const raw = (record as unknown as Record<string, unknown>)[key];
     if (key === '备注') {
@@ -122,6 +125,42 @@ export function DetailView({ id }: { id: number | null }) {
             ) : null}
           </div>
         ))}
+      </div>
+
+      {/* v6.2（需求 1）：计划清单成员卡片 —— 点击清单名加入/移出，即时生效 */}
+      <div className="iw-settings-card" style={{ maxWidth: 'none' }} data-testid="iw-plan-card">
+        <div className="iw-detail-group" style={{ marginBottom: 0 }}>
+          <div className="iw-detail-group-title">计划清单</div>
+          {app.plans.length ? (
+            <div className="iw-chip-group" data-testid="iw-plan-chips">
+              {app.plans.map((plan) => {
+                const on = plan.记录ID列表.includes(record.id);
+                return (
+                  <button
+                    key={plan.id}
+                    type="button"
+                    className={`iw-chip${on ? ' iw-chip-on' : ''}`}
+                    onClick={() => app.actions.toggleRecordInPlan(plan.id, record.id)}
+                    aria-pressed={on}
+                    aria-label={`计划清单：${plan.名称}`}
+                    title={on ? '点击移出该清单' : '点击加入该清单'}
+                  >
+                    {plan.名称}（{plan.记录ID列表.length}）
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="iw-cell-muted">
+              还没有计划清单。到「设置 › 计划清单」创建一份（如「2026 春季」），再回来把这条记录加进去。
+            </div>
+          )}
+          {app.plans.length ? (
+            <div className="iw-field-hint" style={{ marginTop: 8 }}>
+              点击清单名即可加入 / 移出；当前共在 {inPlans.length} 份清单里。改动会随下一次「同步到 GitHub」写回仓库。
+            </div>
+          ) : null}
+        </div>
       </div>
     </>
   );
