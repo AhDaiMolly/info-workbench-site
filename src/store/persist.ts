@@ -1,7 +1,7 @@
 /**
  * 信息汇总工作台 · 浏览器本地存储（架构 4.3 / 4.5）
  *
- * 八个键（ARCH L3 层）：
+ * 九个键（ARCH L3 层）：
  *   iw.config   连接配置（仓库 + 令牌）——令牌只在发起 API 请求时读取，不进全局状态
  *   iw.cache    本地数据缓存（记录 + schema + 基线 sha + dataVersion）
  *   iw.pending  离线暂存队列（未同步改动）
@@ -10,11 +10,13 @@
  *   iw.settings 设置项（备份周期等）
  *   iw.actionlog 同步 / 备份操作日志（v4：只保留最近 3 条）
  *   iw.maxid    记录 ID 发号水位（v4：保证删除记录后 ID 不复用）
+ *   iw.ignoredChecks 已忽略的待确认项（v6.1.1：单人使用，只存浏览器本地）
  *
  * ⚠️ 令牌永不写入 URL / 日志 / commit message / 导出文件 / 构建产物。
  */
 
 import type { ActionLogEntry, FilterPreset, Filters, RecordItem, RepoConfig, Schema, SortSpec } from '../types';
+import type { IgnoredCheckEntry } from './pendingChecks';
 import { LEGACY_FIELD_ALIAS, REMOVED_FIELD_KEYS } from '../schema';
 
 export const STORAGE_KEYS = {
@@ -26,6 +28,8 @@ export const STORAGE_KEYS = {
   settings: 'iw.settings',
   actionlog: 'iw.actionlog',
   maxid: 'iw.maxid',
+  /** v6.1.1：待确认清单的「已忽略项」（单人使用，浏览器本地持久化即可） */
+  ignoredChecks: 'iw.ignoredChecks',
 } as const;
 
 /** v4：操作日志最多保留的条数 */
@@ -428,4 +432,27 @@ export function readLastIssuedId(): number {
 
 export function writeLastIssuedId(id: number): WriteOutcome {
   return writeJson(STORAGE_KEYS.maxid, Math.max(0, Math.floor(id)), safeStorage('local'));
+}
+
+/* --------------------- 已忽略的待确认项（v6.1.1） --------------------- */
+
+/**
+ * 读「已忽略的待确认项」。用户对某条核对结果选择「忽略」后，
+ * 它不再出现在列表页横幅里，但保留在本地存储中，可在设置页查看与恢复。
+ * 单人使用，浏览器本地持久化即可，不进入数据仓。
+ */
+export function readIgnoredChecks(): IgnoredCheckEntry[] {
+  const raw = readJson<IgnoredCheckEntry[]>(STORAGE_KEYS.ignoredChecks, safeStorage('local'));
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((e): e is IgnoredCheckEntry => Boolean(e) && typeof e === 'object' && typeof e.key === 'string')
+    .map((e): IgnoredCheckEntry => ({
+      key: String(e.key),
+      摘要: String(e.摘要 ?? ''),
+      ignoredAt: String(e.ignoredAt ?? ''),
+    }));
+}
+
+export function writeIgnoredChecks(entries: IgnoredCheckEntry[]): WriteOutcome {
+  return writeJson(STORAGE_KEYS.ignoredChecks, entries, safeStorage('local'));
 }

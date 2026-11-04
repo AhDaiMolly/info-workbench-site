@@ -185,32 +185,28 @@ export interface SyncState {
   message: string | null;
 }
 
+/**
+ * v6.1.1：待确认清单不再来自数据仓静态文件，而是按当前记录实时核对
+ * （见 store/pendingChecks.ts）。key 是条目的稳定键，忽略清单按它持久化。
+ */
 export interface ConflictEntry {
+  key: string;
   类型: string;
   字段: string;
   记录ID: number;
   名称: string;
   详情: string;
-  原始值?: Record<string, string>;
   处理建议?: string;
 }
 
 export interface SuggestionEntry {
+  key: string;
   类型: string;
   字段: string;
   记录ID: number;
   名称: string;
   详情: string;
   处理建议?: string;
-}
-
-export interface PendingConflictsFile {
-  schemaVersion: number;
-  appName: string;
-  generatedAt: string;
-  说明?: string;
-  conflicts: ConflictEntry[];
-  suggestions: SuggestionEntry[];
 }
 
 /* -------------------------------- 视图 -------------------------------- */

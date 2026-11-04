@@ -1,8 +1,13 @@
 /**
- * 信息汇总工作台 · 待人工确认清单横幅（PRD 4.4 第 3 条 / AC-4）
+ * 信息汇总工作台 · 待人工确认清单横幅（v6.1.1 动态核对版）
  *
- * 19 条勾选矛盾记录 + 1 条空编号记录导入后生成清单，页面顶部提示并逐条可查。
- * 系统不自动翻转任何勾选值，用户确认后仅标记「已确认」。
+ * v1 导入时曾用静态快照（数据仓 pending-conflicts.json）提示矛盾项，
+ * 从不随数据更新、措辞也停在旧字段口径。v6.1.1 起按当前记录实时核对
+ * （store/pendingChecks.ts，规则沿用当初迁移工具并同步到 v6.1 字段口径）：
+ *   · 用户修复记录后，条目自动从清单消失；
+ *   · 全部处理完（或全部忽略）时横幅不显示；
+ *   · 每条支持「忽略」（浏览器本地持久化），「全部忽略」一键收起，
+ *     已忽略项可在「设置 › 数据管理 › 待确认清单」查看与恢复。
  */
 
 import type { ConflictEntry, SuggestionEntry } from '../../types';
@@ -10,27 +15,31 @@ import type { ConflictEntry, SuggestionEntry } from '../../types';
 interface Props {
   conflicts: ConflictEntry[];
   suggestions: SuggestionEntry[];
-  resolved: number[];
-  onResolve: (recordId: number) => void;
+  ignoredKeys: string[];
+  onIgnore: (item: ConflictEntry | SuggestionEntry) => void;
+  onIgnoreAll: () => void;
   onOpenRecord: (recordId: number) => void;
 }
 
-export function ConflictsBanner({ conflicts, suggestions, resolved, onResolve, onOpenRecord }: Props) {
-  const open = conflicts.filter((c) => !resolved.includes(c.记录ID));
-  if (!open.length && !suggestions.length) return null;
+export function ConflictsBanner({ conflicts, suggestions, ignoredKeys, onIgnore, onIgnoreAll, onOpenRecord }: Props) {
+  const ignored = new Set(ignoredKeys);
+  const openConflicts = conflicts.filter((c) => !ignored.has(c.key));
+  const openSuggestions = suggestions.filter((s) => !ignored.has(s.key));
+  if (!openConflicts.length && !openSuggestions.length) return null;
 
   return (
-    <div className="iw-banner iw-banner-warn">
+    <div className="iw-banner iw-banner-warn" data-testid="iw-conflicts-banner">
       <div style={{ flex: 1 }}>
         <div className="iw-banner-title">
-          待人工确认清单：{open.length} 条矛盾记录
-          {suggestions.length ? `，${suggestions.length} 条建议补全` : ''}
+          待人工确认清单：{openConflicts.length} 条矛盾记录
+          {openSuggestions.length ? `，${openSuggestions.length} 条建议补全` : ''}
         </div>
         <div className="iw-banner-text" style={{ marginBottom: 10 }}>
-          迁移时发现原始表格中「勾选状态」与「尺码信息」相互矛盾。系统<b>没有</b>自动修改任何值，请逐条确认后再手工调整。
+          按当前数据实时核对得出：「拥有形态」的勾选与尺码填写相互矛盾，或勾选了形态但对应尺码为空。
+          系统<b>没有</b>自动修改任何值；修复记录后条目会自动从清单消失。
         </div>
-        {open.slice(0, 6).map((c) => (
-          <div key={`${c.类型}-${c.记录ID}-${c.字段}`} className="iw-conflict-item">
+        {openConflicts.slice(0, 6).map((c) => (
+          <div key={c.key} className="iw-conflict-item">
             <div>
               <div className="iw-conflict-title">
                 #{c.记录ID} {c.名称}
@@ -42,17 +51,24 @@ export function ConflictsBanner({ conflicts, suggestions, resolved, onResolve, o
               <button className="iw-btn iw-btn-sm" type="button" onClick={() => onOpenRecord(c.记录ID)}>
                 查看
               </button>
-              <button className="iw-btn iw-btn-sm" type="button" onClick={() => onResolve(c.记录ID)}>
-                标记已确认
+              <button
+                className="iw-btn iw-btn-sm"
+                type="button"
+                data-testid={`iw-ignore-${c.key}`}
+                onClick={() => onIgnore(c)}
+              >
+                忽略
               </button>
             </div>
           </div>
         ))}
-        {open.length > 6 ? (
-          <div className="iw-conflict-detail">其余 {open.length - 6} 条可在「设置 › 数据管理」导出的数据文件里逐条查看。</div>
+        {openConflicts.length > 6 ? (
+          <div className="iw-conflict-detail">
+            其余 {openConflicts.length - 6} 条点「全部忽略」可一键收起，或修复对应记录后自动消失。
+          </div>
         ) : null}
-        {suggestions.map((s) => (
-          <div key={`s-${s.记录ID}`} className="iw-conflict-item">
+        {openSuggestions.map((s) => (
+          <div key={s.key} className="iw-conflict-item">
             <div>
               <div className="iw-conflict-title">#{s.记录ID} {s.名称}（建议补全）</div>
               <div className="iw-conflict-detail">{s.详情}</div>
@@ -62,9 +78,27 @@ export function ConflictsBanner({ conflicts, suggestions, resolved, onResolve, o
               <button className="iw-btn iw-btn-sm" type="button" onClick={() => onOpenRecord(s.记录ID)}>
                 查看
               </button>
+              <button
+                className="iw-btn iw-btn-sm"
+                type="button"
+                data-testid={`iw-ignore-${s.key}`}
+                onClick={() => onIgnore(s)}
+              >
+                忽略
+              </button>
             </div>
           </div>
         ))}
+      </div>
+      <div className="iw-banner-actions" style={{ alignSelf: 'flex-start' }}>
+        <button
+          className="iw-btn iw-btn-sm"
+          type="button"
+          data-testid="iw-ignore-all"
+          onClick={onIgnoreAll}
+        >
+          全部忽略
+        </button>
       </div>
     </div>
   );

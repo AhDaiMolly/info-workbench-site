@@ -154,8 +154,9 @@ export function ListView() {
       <ConflictsBanner
         conflicts={app.conflicts}
         suggestions={app.suggestions}
-        resolved={app.resolvedConflicts}
-        onResolve={app.actions.resolveConflictItem}
+        ignoredKeys={app.ignoredChecks.map((e) => e.key)}
+        onIgnore={app.actions.ignoreCheckItem}
+        onIgnoreAll={app.actions.ignoreAllChecks}
         onOpenRecord={(id) => navigate({ view: 'detail', id, filters, query, sort })}
       />
 

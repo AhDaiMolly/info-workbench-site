@@ -18,10 +18,11 @@ import { buildIndexes, type Indexes } from './selectors';
 import {
   applyMigrations, findLegacyFieldKeys, findShellRecords, nextRecordId, normalizeToCurrent, validateRecords,
 } from './migrations';
+import { computePendingChecks, checkSummary, type IgnoredCheckEntry } from './pendingChecks';
 import {
-  appendActionLog, clearConfig, readActionLog, readBaseline, readCache, readConfigMeta,
+  appendActionLog, clearConfig, readActionLog, readBaseline, readCache, readConfigMeta, readIgnoredChecks,
   readLastIssuedId, readPending, readPrefs, readSettings, readToken, writeBaseline, writeCache,
-  writeConfig, writeLastIssuedId, writePending, writePrefs, writeSettings,
+  writeConfig, writeIgnoredChecks, writeLastIssuedId, writePending, writePrefs, writeSettings,
   type ConfigMeta, type PendingChange, type WriteOutcome,
 } from './persist';
 import { GithubClient, GithubError, parseRepoUrl } from '../sync/github';
@@ -32,7 +33,6 @@ import { applyQuery, computeStats, sortRecords } from './selectors';
 
 export const DATA_FILE_PATH = 'data/records.json';
 export const SCHEMA_FILE_PATH = 'data/schema.json';
-export const CONFLICTS_FILE_PATH = 'data/pending-conflicts.json';
 export const AUDIT_FILE_PATH = 'data/migration-audit.json';
 
 /**
@@ -61,10 +61,12 @@ export interface AppState {
   page: number;
   pageSize: number;
   presets: Array<{ id: string; name: string; filters: Filters; createdAt: string }>;
-  conflicts: ConflictEntry[];
-  suggestions: SuggestionEntry[];
-  /** 已确认（用户处理过）的冲突条目 ID 集合 */
-  resolvedConflicts: number[];
+  /**
+   * v6.1.1：待确认清单改为按当前记录实时核对（store/pendingChecks.ts），
+   * conflicts / suggestions 由 Provider 派生后挂进 Context，不再是 AppState 的静态字段。
+   */
+  /** v6.1.1：用户选择「忽略」的待确认项（浏览器本地持久化，设置页可查看与恢复） */
+  ignoredChecks: IgnoredCheckEntry[];
   config: ConfigMeta | null;
   connection: ConnectionStatus;
   baseSha: string | null;
@@ -100,8 +102,8 @@ type Action =
   | { type: 'SET_PRESETS'; presets: AppState['presets'] }
   | { type: 'SET_RECORDS'; records: RecordItem[]; baseSha?: string | null; dataVersion?: number; updatedAt?: string; keepPending?: boolean }
   | { type: 'SET_SCHEMA'; schema: Schema }
-  | { type: 'SET_CONFLICTS'; conflicts: ConflictEntry[]; suggestions: SuggestionEntry[] }
-  | { type: 'RESOLVE_CONFLICT_ITEM'; recordId: number }
+  /** v6.1.1：已忽略的待确认项整体替换（读取 / 忽略 / 恢复都走它） */
+  | { type: 'SET_IGNORED_CHECKS'; entries: IgnoredCheckEntry[] }
   | { type: 'SET_CONFIG'; config: ConfigMeta | null }
   | { type: 'SET_CONNECTION'; status: ConnectionStatus }
   | { type: 'SET_SYNC'; status: AppState['syncStatus']; message?: string | null }
@@ -153,15 +155,8 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'SET_SCHEMA':
       return { ...state, schema: action.schema };
-    case 'SET_CONFLICTS':
-      return { ...state, conflicts: action.conflicts, suggestions: action.suggestions };
-    case 'RESOLVE_CONFLICT_ITEM':
-      return {
-        ...state,
-        resolvedConflicts: state.resolvedConflicts.includes(action.recordId)
-          ? state.resolvedConflicts
-          : [...state.resolvedConflicts, action.recordId],
-      };
+    case 'SET_IGNORED_CHECKS':
+      return { ...state, ignoredChecks: action.entries };
     case 'SET_CONFIG':
       return { ...state, config: action.config };
     case 'SET_CONNECTION':
@@ -268,9 +263,7 @@ function initState(): AppState {
     page: 1,
     pageSize: prefs.pageSize ?? 50,
     presets: prefs.presets ?? [],
-    conflicts: [],
-    suggestions: [],
-    resolvedConflicts: [],
+    ignoredChecks: readIgnoredChecks(),
     config,
     connection: 'unconfigured',
     baseSha: cache?.baseSha ?? null,
@@ -309,7 +302,14 @@ export interface AppActions {
   deleteRecord: (id: number) => void;
   /** v4：一键清理「名称为空」的导入遗留空壳记录，返回清理条数 */
   cleanupShellRecords: () => number;
-  resolveConflictItem: (recordId: number) => void;
+  /** v6.1.1：忽略一条待确认项（持久化到浏览器本地，设置页可查看与恢复） */
+  ignoreCheckItem: (item: ConflictEntry | SuggestionEntry) => void;
+  /** v6.1.1：忽略当前全部待确认项 */
+  ignoreAllChecks: () => void;
+  /** v6.1.1：恢复一条被忽略的待确认项（重新出现在横幅里） */
+  restoreIgnoredCheck: (key: string) => void;
+  /** v6.1.1：恢复全部被忽略的待确认项 */
+  restoreAllIgnoredChecks: () => void;
   saveConfig: (input: { repoUrl: string; branch: string; token: string; sessionOnly: boolean }) => Promise<boolean>;
   clearConfigAction: () => void;
   testConnection: () => Promise<boolean>;
@@ -323,7 +323,14 @@ export interface AppActions {
   dismissNotice: () => void;
 }
 
-const AppContext = createContext<(AppState & { actions: AppActions }) | null>(null);
+const AppContext = createContext<
+  (AppState & {
+    /** v6.1.1：待确认清单由 Provider 按当前记录实时核对派生（store/pendingChecks.ts） */
+    conflicts: ConflictEntry[];
+    suggestions: SuggestionEntry[];
+    actions: AppActions;
+  }) | null
+>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, initState);
@@ -507,6 +514,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return shells.length;
     };
 
+    /* -------- v6.1.1：待确认清单的忽略 / 恢复（浏览器本地持久化） -------- */
+    const setIgnoredChecks = (entries: IgnoredCheckEntry[]) => {
+      dispatch({ type: 'SET_IGNORED_CHECKS', entries });
+      // 与发号水位同一持久化模式：动作里直接写本地存储，写失败要给用户提示（质检 P2-3）
+      const outcome = writeIgnoredChecks(entries);
+      const message = storageErrorNotice(outcome, '已忽略的待确认项');
+      if (message) dispatch({ type: 'SET_NOTICE', notice: message });
+    };
+
+    const ignoreCheckItem = (item: ConflictEntry | SuggestionEntry) => {
+      const st = current();
+      if (st.ignoredChecks.some((e) => e.key === item.key)) return;
+      setIgnoredChecks([
+        ...st.ignoredChecks,
+        { key: item.key, 摘要: checkSummary(item), ignoredAt: new Date().toISOString() },
+      ]);
+    };
+
+    const ignoreAllChecks = () => {
+      const st = current();
+      const known = new Set(st.ignoredChecks.map((e) => e.key));
+      const pending = computePendingChecks(st.records);
+      const next = [...st.ignoredChecks];
+      for (const item of [...pending.conflicts, ...pending.suggestions]) {
+        if (!known.has(item.key)) {
+          known.add(item.key);
+          next.push({ key: item.key, 摘要: checkSummary(item), ignoredAt: new Date().toISOString() });
+        }
+      }
+      if (next.length !== st.ignoredChecks.length) setIgnoredChecks(next);
+    };
+
+    const restoreIgnoredCheck = (key: string) => {
+      const st = current();
+      setIgnoredChecks(st.ignoredChecks.filter((e) => e.key !== key));
+    };
+
+    const restoreAllIgnoredChecks = () => {
+      setIgnoredChecks([]);
+    };
+
     const makeClient = (): GithubClient | null => {
       const st = current();
       if (!st.config) return null;
@@ -520,23 +568,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
     };
 
+    // v6.1.1：待确认清单不再拉取数据仓静态文件（pending-conflicts.json），
+    // 改为按当前记录实时核对（computePendingChecks，见 Provider 派生段）。
     const loadSchemaAndConflicts = async (client: GithubClient) => {
       try {
         const remoteSchema = await client.getFile(SCHEMA_FILE_PATH);
         const parsed = JSON.parse(remoteSchema.content) as Partial<Schema>;
         dispatch({ type: 'SET_SCHEMA', schema: mergeSchema(DEFAULT_SCHEMA, parsed) });
       } catch { /* schema 取不到不阻断主流程，使用内置兜底 */ }
-      try {
-        const remoteConflicts = await client.getFile(CONFLICTS_FILE_PATH);
-        const parsed = JSON.parse(remoteConflicts.content) as {
-          conflicts?: ConflictEntry[]; suggestions?: SuggestionEntry[];
-        };
-        dispatch({
-          type: 'SET_CONFLICTS',
-          conflicts: parsed.conflicts ?? [],
-          suggestions: parsed.suggestions ?? [],
-        });
-      } catch { /* 冲突清单取不到不阻断主流程 */ }
     };
 
     const pull = async (silent = false): Promise<boolean> => {
@@ -949,7 +988,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       updateRecord,
       deleteRecord,
       cleanupShellRecords,
-      resolveConflictItem: (recordId) => dispatch({ type: 'RESOLVE_CONFLICT_ITEM', recordId }),
+      ignoreCheckItem,
+      ignoreAllChecks,
+      restoreIgnoredCheck,
+      restoreAllIgnoredChecks,
       saveConfig,
       clearConfigAction,
       testConnection,
@@ -964,10 +1006,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  /* -------- v6.1.1：待确认清单动态核对 --------
+   * 打开工作台即按当前记录实时重算矛盾项与建议补全项（规则见 store/pendingChecks.ts）。
+   * 用户修复记录后条目自动消失；全部处理完（或全部忽略）横幅不显示。 */
+  const pendingChecks = useMemo(() => computePendingChecks(state.records), [state.records]);
+
   const value = useMemo(
-    () => ({ ...state, actions }),
+    () => ({
+      ...state,
+      conflicts: pendingChecks.conflicts,
+      suggestions: pendingChecks.suggestions,
+      actions,
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state, version],
+    [state, pendingChecks, version],
   );
 
   /* -------- 启动时自动拉取（质检 P0-1） -------- */

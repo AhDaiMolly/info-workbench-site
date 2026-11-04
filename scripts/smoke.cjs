@@ -229,6 +229,161 @@ function apiPayload(name, buf) {
       listExportButtons.length ? `列表页仍有导出按钮：${listExportButtons.join('、')}` : '列表页没有任何导出按钮');
     record('v4 列表页无「回收站」入口', !listText.includes('回收站'), '未出现');
 
+    /* 1c. v6.1.1 待确认清单动态核对（横幅按当前数据实时重算，不再依赖静态快照） */
+    await page.evaluate(() => { localStorage.removeItem('iw.ignoredChecks'); });
+    await goto('/list');
+
+    // 期望值从注入的 fixture 推导（规则与 src/store/pendingChecks.ts 一致，不硬编码条数）
+    const pendingExpect = (() => {
+      const conflicts = []; const suggestions = [];
+      for (const r of allFile.records) {
+        const own = Array.isArray(r['拥有形态']) ? r['拥有形态'] : [];
+        const e = (Array.isArray(r['电子版尺码']) ? r['电子版尺码'] : []).filter((x) => String(x).trim());
+        const p = (Array.isArray(r['纸质版尺码']) ? r['纸质版尺码'] : []).filter((x) => String(x).trim());
+        if (!String(r['名称'] ?? '').trim()) conflicts.push({ id: r.id, field: '名称' });
+        if (e.length && !own.includes('电子版')) conflicts.push({ id: r.id, field: '电子版尺码' });
+        if (p.length && !own.includes('纸质版')) conflicts.push({ id: r.id, field: '纸质版尺码' });
+        if (own.includes('电子版') && !e.length) suggestions.push({ id: r.id, field: '电子版尺码' });
+        if (own.includes('纸质版') && !p.length) suggestions.push({ id: r.id, field: '纸质版尺码' });
+      }
+      conflicts.sort((a, b) => a.id - b.id);
+      suggestions.sort((a, b) => a.id - b.id);
+      return { conflicts, suggestions };
+    })();
+    const bannerState = async () => page.evaluate(() => {
+      const el = document.querySelector('[data-testid="iw-conflicts-banner"]');
+      return el ? { present: true, text: (el.innerText || '').replace(/\s+/g, ' ') } : { present: false, text: '' };
+    });
+    const expectTotal = pendingExpect.conflicts.length + pendingExpect.suggestions.length;
+    const bs1 = await bannerState();
+    record('v6.1.1-1 横幅按当前数据实时核对（计数与 fixture 推导一致）',
+      expectTotal > 0
+        ? bs1.present
+          && bs1.text.includes(`待人工确认清单：${pendingExpect.conflicts.length} 条矛盾记录`)
+          && bs1.text.includes(`${pendingExpect.suggestions.length} 条建议补全`)
+        : !bs1.present,
+      bs1.present ? bs1.text.slice(0, 100) : '横幅未显示');
+    const staleOldTerms = ['拥有电子版', '电子版尺码组', '想做'];
+    const idsShown = [...pendingExpect.conflicts, ...pendingExpect.suggestions]
+      .every((it) => bs1.text.includes(`#${it.id} `));
+    record('v6.1.1-2 横幅只列真实剩余项且措辞为 v6.1 新口径（旧字段名消失）',
+      bs1.present && idsShown
+        && bs1.text.includes('拥有形态未勾选')
+        && !staleOldTerms.some((t) => bs1.text.includes(t)),
+      bs1.present ? `${idsShown ? '全部条目在列' : '有条目缺失'}：${bs1.text.slice(0, 90)}` : '横幅未显示');
+
+    // 忽略单条：选一条只在矛盾清单里出现、无建议项、且唯一检查的记录
+    const sugIds = new Set(pendingExpect.suggestions.map((s) => s.id));
+    const conflictCount = (id) => pendingExpect.conflicts.filter((c) => c.id === id).length;
+    let igItem = null;
+    let bs5 = null;
+    igItem = pendingExpect.conflicts.find((c) => c.field !== '名称' && !sugIds.has(c.id) && conflictCount(c.id) === 1);
+    if (!igItem) {
+      record('v6.1.1-3 单条「忽略」后条目从横幅消失并写入本地存储', false, '当前 fixture 中无单矛盾样本，请更新断言样本');
+    } else {
+      const igKey = `勾选与信息矛盾|${igItem.field}|${igItem.id}`;
+      const clickedIg = await page.evaluate((sel) => {
+        const b = document.querySelector(sel);
+        if (b) { b.click(); return true; }
+        return false;
+      }, `[data-testid="iw-ignore-${igKey}"]`);
+      await new Promise((r) => setTimeout(r, 700));
+      const bs2 = await bannerState();
+      const storedIgnored = await page.evaluate(() => {
+        try { return JSON.parse(localStorage.getItem('iw.ignoredChecks') || '[]'); } catch (e) { return []; }
+      });
+      record('v6.1.1-3 单条「忽略」后条目从横幅消失并写入本地存储',
+        clickedIg && bs2.present
+          && bs2.text.includes(`待人工确认清单：${pendingExpect.conflicts.length - 1} 条矛盾记录`)
+          && !bs2.text.includes(`#${igItem.id} `)
+          && storedIgnored.length === 1 && storedIgnored[0].key === igKey,
+        `点击 ${clickedIg}，忽略键 ${storedIgnored.length ? storedIgnored[0].key : '无'}，横幅 ${bs2.present ? bs2.text.slice(0, 60) : '消失'}`);
+
+      // 刷新后忽略仍然生效（浏览器本地持久化）
+      await page.reload({ waitUntil: 'networkidle2' });
+      await new Promise((r) => setTimeout(r, 400));
+      const bs3 = await bannerState();
+      record('v6.1.1-4 刷新后忽略仍然生效（本地持久化，不随页面重开复原）',
+        bs3.present
+          && bs3.text.includes(`待人工确认清单：${pendingExpect.conflicts.length - 1} 条矛盾记录`)
+          && !bs3.text.includes(`#${igItem.id} `),
+        bs3.present ? bs3.text.slice(0, 80) : '横幅未显示');
+
+      // 设置页：查看已忽略项并「恢复」→ 重新出现在横幅
+      await goto('/settings');
+      const pcBlock = await page.evaluate(() => {
+        const b = document.querySelector('[data-testid="iw-pending-checks-block"]');
+        return b ? { present: true, text: (b.innerText || '').replace(/\s+/g, ' ') } : { present: false, text: '' };
+      });
+      const restoredOne = await page.evaluate((id) => {
+        const items = Array.from(document.querySelectorAll('[data-testid="iw-ignored-item"]'));
+        const item = items.find((n) => (n.innerText || '').includes(`#${id}`));
+        if (!item) return false;
+        const btn = Array.from(item.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '恢复');
+        if (btn) { btn.click(); return true; }
+        return false;
+      }, igItem.id);
+      await new Promise((r) => setTimeout(r, 500));
+      await goto('/list');
+      const bs4 = await bannerState();
+      record('v6.1.1-5 设置页可查看已忽略项并「恢复」（恢复后重新出现在横幅）',
+        pcBlock.present && pcBlock.text.includes('已被你忽略') && pcBlock.text.includes(`#${igItem.id}`)
+          && restoredOne && bs4.present && bs4.text.includes(`#${igItem.id} `),
+        `设置页块 ${pcBlock.present ? '存在' : '缺失'}，恢复点击 ${restoredOne}，横幅 ${bs4.present ? bs4.text.slice(0, 60) : '未显示'}`);
+
+      // 修复记录（编辑该记录，勾上「电子版」使其与已填尺码一致）→ 矛盾条目自动消失
+      await goto(`/editor/${igItem.id}`);
+      const ticked = await page.evaluate(() => {
+        const group = document.querySelector('[role="group"][aria-label="拥有形态"]');
+        if (!group) return false;
+        const chip = Array.from(group.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '电子版');
+        if (!chip) return false;
+        if (chip.getAttribute('aria-pressed') === 'true') return true;
+        chip.click();
+        return true;
+      });
+      await new Promise((r) => setTimeout(r, 700));
+      const savedFix = await clickByText('保存');
+      await new Promise((r) => setTimeout(r, 800));
+      await goto('/list');
+      bs5 = await bannerState();
+      record('v6.1.1-6 修复记录后矛盾条目自动从清单消失（动态重算，无需静态快照）',
+        ticked && savedFix && bs5.present
+          && !bs5.text.includes(`#${igItem.id} `)
+          && bs5.text.includes(`待人工确认清单：${pendingExpect.conflicts.length - 1} 条矛盾记录`),
+        `勾选 ${ticked}，保存 ${savedFix}，横幅 ${bs5.present ? bs5.text.slice(0, 80) : '未显示'}`);
+    }
+
+    // 全部忽略 → 横幅收起；刷新后仍不显示；随后清理本地忽略清单，不影响后续阶段
+    const expectLeft = (() => {
+      // 修复后的剩余期望：若上一步完成了修复，矛盾数已减 1
+      const fixedApplied = Boolean(igItem && bs5 && bs5.present && !bs5.text.includes(`#${igItem.id} `));
+      return (fixedApplied ? pendingExpect.conflicts.length - 1 : pendingExpect.conflicts.length)
+        + pendingExpect.suggestions.length;
+    })();
+    if (expectLeft > 0) {
+      const igAll = await page.evaluate(() => {
+        const b = document.querySelector('[data-testid="iw-ignore-all"]');
+        if (b) { b.click(); return true; }
+        return false;
+      });
+      await new Promise((r) => setTimeout(r, 700));
+      const bs6 = await bannerState();
+      await page.reload({ waitUntil: 'networkidle2' });
+      await new Promise((r) => setTimeout(r, 400));
+      const bs7 = await bannerState();
+      record('v6.1.1-7 「全部忽略」后横幅收起，刷新后仍不显示',
+        igAll && !bs6.present && !bs7.present,
+        `点击 ${igAll}，收起后横幅 ${bs6.present ? '仍在' : '已消失'}，刷新后 ${bs7.present ? '仍在' : '已消失'}`);
+    } else {
+      record('v6.1.1-7 全部处理完时横幅不显示', !(await bannerState()).present, '当前数据已无待确认项');
+    }
+    // 清理本节产生的本地忽略状态，不污染后续阶段
+    await page.evaluate(() => { localStorage.removeItem('iw.ignoredChecks'); });
+    await page.reload({ waitUntil: 'networkidle2' });
+    await new Promise((r) => setTimeout(r, 400));
+
+
     /* 2. 搜索 */
     const countText = async () => page.evaluate(() => {
       const el = document.querySelector('.iw-result-count');
@@ -403,7 +558,7 @@ function apiPayload(name, buf) {
       };
     });
     record('v6-1 设置页展示「版本信息」卡片（版本号/构建日期/提交）',
-      verInfo.hasCard && verInfo.bodyHasFields && verInfo.text.includes('v6.1.0'),
+      verInfo.hasCard && verInfo.bodyHasFields && verInfo.text.includes('v6.1.1'),
       verInfo.hasCard ? `版本文本：${verInfo.text}` : '未找到版本信息卡片');
 
     // 样本：仅勾选「电子版」且有备注的记录（从当前数据里挑）

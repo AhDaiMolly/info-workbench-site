@@ -32,6 +32,17 @@ export function SettingsView() {
   // v4：数据管理区 —— 识别「名称为空」的导入遗留记录，供一键清理
   const shellRecords = useMemo(() => findShellRecords(app.records), [app.records]);
 
+  /* v6.1.1：待确认清单动态核对 —— 设置页展示当前核对结果与已忽略项（可恢复） */
+  const ignoredChecks = app.ignoredChecks ?? [];
+  const pendingChecks = useMemo(
+    () => ({ conflicts: app.conflicts ?? [], suggestions: app.suggestions ?? [] }),
+    [app.conflicts, app.suggestions],
+  );
+  const currentCheckKeys = useMemo(
+    () => new Set([...pendingChecks.conflicts, ...pendingChecks.suggestions].map((i) => i.key)),
+    [pendingChecks],
+  );
+
   const statusText = !app.config
     ? '未配置'
     : app.connection === 'connected' ? '已连接'
@@ -222,6 +233,56 @@ export function SettingsView() {
               清理只删除「名称为空」的空壳记录，其余记录不受影响；清理后可在列表页点「同步」写回仓库。
             </div>
           ) : null}
+        </div>
+
+        <div className="iw-log-block" data-testid="iw-pending-checks-block">
+          <div className="iw-log-title">待确认清单</div>
+          <p className="iw-settings-desc" style={{ marginBottom: 8 }}>
+            {`按当前数据实时核对：${pendingChecks.conflicts.length} 条矛盾记录、${pendingChecks.suggestions.length} 条建议补全`
+              + (ignoredChecks.length
+                ? `；${ignoredChecks.length} 条已被你忽略。`
+                : '。')
+              + '修复对应记录后条目会自动从列表页横幅消失；被忽略的条目在这里可以恢复。'}
+          </p>
+          <div className="iw-actions-row">
+            <button
+              className="iw-btn"
+              type="button"
+              disabled={!ignoredChecks.length}
+              onClick={() => app.actions.restoreAllIgnoredChecks()}
+            >
+              全部恢复（{ignoredChecks.length}）
+            </button>
+          </div>
+          {ignoredChecks.length ? (
+            <div>
+              {ignoredChecks.map((e) => (
+                <div key={e.key} className="iw-conflict-item" data-testid="iw-ignored-item">
+                  <div>
+                    <div className="iw-conflict-title">{e.摘要 || e.key}</div>
+                    <div className="iw-conflict-detail">
+                      {currentCheckKeys.has(e.key)
+                        ? '当前数据中仍存在这个问题（恢复后会重新出现在列表页横幅里）。'
+                        : '当前数据中已检测不到这个问题（记录可能已修复或删除）。'}
+                    </div>
+                  </div>
+                  <div className="iw-banner-actions">
+                    <button
+                      className="iw-btn iw-btn-sm"
+                      type="button"
+                      onClick={() => app.actions.restoreIgnoredCheck(e.key)}
+                    >
+                      恢复
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="iw-field-hint" style={{ marginTop: 8 }}>
+              在列表页横幅点「忽略」的条目会出现在这里，供日后重新确认；没有已忽略的条目。
+            </div>
+          )}
         </div>
       </div>
 
