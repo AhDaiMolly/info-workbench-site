@@ -69,6 +69,14 @@ export const OWNERSHIP_TRISTATE_OPTIONS = ['有', '没有', '不确定'];
 export const OWNERSHIP_FORMAT_OPTIONS = ['电子版', '纸质版'];
 
 /**
+ * v6.5（需求 1）：全站隐藏的字段（仅展示层隐藏，数据一律保留）。
+ *
+ * 「推荐」「计划」两个字段在界面上不再出现（详情页 / 筛选 / 编辑表单 / 显示列），
+ * 但记录里的原值原样保留 —— 编辑表单提交时仍会带上它们，写回数据仓不变。
+ */
+export const HIDDEN_UI_FIELDS = ['推荐', '计划'];
+
+/**
  * v5（R5）：筛选保留值「任意拥有」—— 拥有形态非空。
  *
  * 在旧的两个单选模型下「任意拥有」需要跨字段 OR 组合才能表达；
@@ -76,8 +84,13 @@ export const OWNERSHIP_FORMAT_OPTIONS = ['电子版', '纸质版'];
  */
 export const OWNERSHIP_ANY = '任意拥有';
 
+/**
+ * v6.5（需求 5）：筛选保留值「均没有」—— 既未勾选电子版、也未勾选纸质版。
+ */
+export const OWNERSHIP_NONE = '均没有';
+
 /** 筛选器里「拥有形态」的全部可选项（含保留值） */
-export const OWNERSHIP_FILTER_OPTIONS = [...OWNERSHIP_FORMAT_OPTIONS, OWNERSHIP_ANY];
+export const OWNERSHIP_FILTER_OPTIONS = [...OWNERSHIP_FORMAT_OPTIONS, OWNERSHIP_ANY, OWNERSHIP_NONE];
 
 /** v3：季节下拉单选的选项集（由现有数据实际取值归纳；「春秋」保持独立选项） */
 export const SEASON_OPTIONS = ['夏', '春秋', '冬'];
@@ -185,14 +198,15 @@ export const LEGACY_ESIZE_GROUP_MAP: Record<string, string[]> = {
 };
 
 /**
- * v5（R1）→ v6.4（需求 6）：列表页的派生列。
+ * v5（R1）→ v6.5（需求 9）：列表页的派生列。
  *
  * 这些列不是数据字段，而是由已有字段渲染出来的展示列：
- *   · 「形态」← 拥有形态（💾 电子版 / 📄 纸质版）
+ *   · 「电子」「纸质」← 拥有形态（分别按是否勾选电子版 / 纸质版显示 √ / ×）
  * v6.4 起派生列只剩「形态」——原「标记」列已删除；
+ * v6.5 把「形态」拆成「电子」「纸质」两列；
  * 「做过」改为直接展示数据字段（打勾 / 留空），不再是派生列。
  */
-export const DERIVED_LIST_COLUMNS = ['形态'];
+export const DERIVED_LIST_COLUMNS = ['电子', '纸质'];
 
 /**
  * v6.1（需求 2 / 3）：被改名替换掉的旧键。
@@ -276,14 +290,14 @@ export function mergeSchema(base: Schema, remote: Partial<Schema> | null | undef
 }
 
 /**
- * 列表默认显示的列（v6.4 · 需求 6：「标记」列替换为「做过」列）。
+ * 列表默认显示的列（v6.5 · 需求 9：「形态」列拆成「电子」「纸质」两列）。
  *
  * 一行回答三个问题：这是什么（名称/品牌/分类/款式/季节）、
- * 我手里有没有（形态）、我的状态（教程 ✓/✗、做过 ✓）。
+ * 我手里有没有（电子 / 纸质）、我的状态（教程 ✓/✗、做过 ✓）。
  * 其余字段（尺码、备注、创建/更新时间）收进详情页；筛选器保留可用字段。
  */
 export const DEFAULT_VISIBLE_COLUMNS = [
-  '名称', '品牌', '分类', '款式', '季节', '形态', '教程', '做过',
+  '名称', '品牌', '分类', '款式', '季节', '电子', '纸质', '教程', '做过',
 ];
 
 /**

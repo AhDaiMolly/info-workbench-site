@@ -55,3 +55,33 @@ export function truncateTags(values: unknown, max = 2): { shown: string[]; extra
   const shown = list.slice(0, max);
   return { shown, extra: Math.max(0, list.length - shown.length) };
 }
+
+/**
+ * v6.5（需求 8）：列表行标注色。
+ *
+ *   · 分类 / 款式 / 季节 任一为空 → 浅灰（incomplete）
+ *   · 三者都有值、但拥有形态为空 → 浅黄（noformat）
+ *   · 灰优先于黄：两条规则互不叠加（分类/款式/季节有缺项时只看灰色）
+ */
+export type RowAnnotation = 'incomplete' | 'noformat' | null;
+
+export function rowAnnotation(r: {
+  分类?: unknown; 款式?: unknown; 季节?: unknown; 拥有形态?: unknown;
+}): RowAnnotation {
+  const catRaw = Array.isArray(r.分类) ? r.分类 : (r.分类 === undefined || r.分类 === null ? [] : [r.分类]);
+  const catEmpty = catRaw.every((v) => String(v ?? '').trim() === '');
+  const styleEmpty = String(r.款式 ?? '').trim() === '';
+  const seasonEmpty = String(r.季节 ?? '').trim() === '';
+  if (catEmpty || styleEmpty || seasonEmpty) return 'incomplete';
+  const own = Array.isArray(r.拥有形态) ? r.拥有形态 : [];
+  if (own.length === 0) return 'noformat';
+  return null;
+}
+
+/**
+ * v6.5（需求 9）：「电子」「纸质」两列的单元格 —— 勾选该形态显示 ✓，未勾选显示 ×。
+ */
+export function formatMarkIcon(own: unknown, format: '电子版' | '纸质版'): '✓' | '×' {
+  const list = Array.isArray(own) ? own.map((v) => String(v)) : [];
+  return list.includes(format) ? '✓' : '×';
+}

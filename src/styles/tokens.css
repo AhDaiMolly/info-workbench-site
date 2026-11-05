@@ -19,6 +19,11 @@
   --iw-warn-soft: #fffaeb;
   --iw-ok: #027a48;
   --iw-ok-soft: #ecfdf3;
+  /* v6.5（需求 8）：列表行标注色 —— 信息不全（灰）优先于无拥有形态（黄） */
+  --iw-row-incomplete: #f4f5f7;
+  --iw-row-incomplete-hover: #eceef1;
+  --iw-row-noformat: #fffaeb;
+  --iw-row-noformat-hover: #fdf3d6;
 
   /* 间距 */
   --iw-s1: 4px;

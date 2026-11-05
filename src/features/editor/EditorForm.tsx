@@ -17,8 +17,26 @@ import { useMemo, useState } from 'react';
 import { useApp } from '../../store/store';
 import { navigate } from '../../router';
 import type { FieldDef, RecordItem } from '../../types';
-import { defaultValueFor, PAPER_SIZE_HEIGHT_TAGS, PAPER_SIZE_LETTER_TAGS } from '../../schema';
+import { defaultValueFor, HIDDEN_UI_FIELDS } from '../../schema';
 import { buildSectionPlan } from '../../sections';
+import { effectiveSizeGroups } from '../../store/options';
+
+/**
+ * v6.5：multi ordered 字段（拥有形态 / 分类）开启新选项时按 schema 固定选项序插入。
+ * 旧实现是 append ——「先勾纸质版、再勾电子版」会得到 ['纸质版','电子版'] 逆序值，
+ * 被 validateRecords 的多值顺序校验拦下，syncNow 在联网前 return，同步永久阻断。
+ */
+const toggleMultiValue = (f: FieldDef, list: string[], o: string): string[] => {
+  if (list.includes(o)) return list.filter((x) => x !== o);
+  const next = [...list, o];
+  if (!f.ordered || !f.options?.length) return next;
+  const order = f.options;
+  // 固定选项内的值按 schema 序排列；兼容容忍的旧取值（不在 options 内）追加在尾部
+  const known = next.filter((v) => order.includes(String(v)));
+  const unknown = next.filter((v) => !order.includes(String(v)));
+  known.sort((a, b) => order.indexOf(String(a)) - order.indexOf(String(b)));
+  return [...known, ...unknown];
+};
 
 interface Props {
   recordId: number | null;
@@ -184,7 +202,7 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
                 key={o}
                 type="button"
                 className={`iw-chip${list.includes(o) ? ' iw-chip-on' : ''}`}
-                onClick={() => setValue(f.jsonKey, list.includes(o) ? list.filter((x) => x !== o) : [...list, o])}
+                onClick={() => setValue(f.jsonKey, toggleMultiValue(f, list, o))}
                 aria-pressed={list.includes(o)}
               >
                 {o}
@@ -211,10 +229,12 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
         // v5（R4）：纸质版尺码的录入快捷标签 —— 字母码 XS–4XL / 身高码 100–180（步长 10）
         // v6.1（需求 3）：电子版尺码由尺码组单选改为标签双轨，与纸质版共用同一套快捷标签交互。
         // 点选即填（再点一次取消），仍可自由补充；已迁移/已录入的历史标签原样保留。
+        // v6.5（需求 1）：电子版 / 纸质版尺码的快捷标签跟随设置页「字段选项管理」即时增删
+        const sizeGroups = effectiveSizeGroups(app.options?.[f.jsonKey]);
         const quickGroups = ['纸质版尺码', '电子版尺码'].includes(f.key)
           ? [
-            { label: '字母码', tags: PAPER_SIZE_LETTER_TAGS },
-            { label: '身高码', tags: PAPER_SIZE_HEIGHT_TAGS },
+            { label: '字母码', tags: sizeGroups.letters },
+            { label: '身高码', tags: sizeGroups.heights },
           ]
           : [];
         return (
@@ -347,6 +367,8 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
             <div className="iw-form-grid">
               {section.fields
                   .filter((f) => !f.system && !f.readonly)
+                  // v6.5（需求 1）：「推荐」「计划」在表单里不再渲染（原值保留、提交照旧写回）
+                  .filter((f) => !HIDDEN_UI_FIELDS.includes(f.label) && !HIDDEN_UI_FIELDS.includes(f.jsonKey))
                   .map((f) => {
                     // v6（需求 3）：形态-尺码联动 —— 勾选「电子版」才展示电子版尺码，
                     // 勾选「纸质版」才展示纸质版尺码；都不选则都不展示。

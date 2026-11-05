@@ -22,7 +22,7 @@
 import type { Filters, RecordItem, SortSpec } from '../types';
 import type { PlanItem } from '../types';
 import {
-  CATEGORY_ORDER, OWNERSHIP_ANY, SIZE_GROUP_ORDER, LEGACY_ESIZE_GROUP_MAP,
+  CATEGORY_ORDER, OWNERSHIP_ANY, OWNERSHIP_NONE, SIZE_GROUP_ORDER, LEGACY_ESIZE_GROUP_MAP,
 } from '../schema';
 
 /* ------------------------------- 全文索引 ------------------------------- */
@@ -37,7 +37,6 @@ export interface Indexes {
 }
 
 const FIELD_SEP = '';
-const CJK = /[㐀-䶿一-鿿豈-﫿]/;
 const LATIN_WORD = /[a-z0-9]+/g;
 
 /** 把一段文本切成检索词元：CJK 取 1~3 字滑窗，拉丁/数字取整词 */
@@ -150,21 +149,25 @@ export function matchesFilters(r: RecordItem, f: Filters, planMembers?: PlanMemb
     const member = planMembers?.get(r.id);
     if (!member || !f.计划清单.some((planId) => member.has(planId))) return false;
   }
-  // v6.1（需求 3）：电子版尺码按标签匹配；旧「尺码组」取值展开为全码要求
+  // v6.5（需求 4）：「尺码」筛选 —— 命中电子版尺码**或**纸质版尺码任意一个含该尺码的记录
+  //   （筛选面板标题已由「电子版尺码」改为「尺码」；内部键与 URL 参数保持不变）
   if (f.电子版尺码.length) {
     const esize = r.电子版尺码 ?? [];
+    const psize = r.纸质版尺码 ?? [];
     const required = expandEsizeFilterValues(f.电子版尺码);
-    if (!required.every((t) => esize.includes(t))) return false;
+    if (!required.every((t) => esize.includes(t) || psize.includes(t))) return false;
   }
   // v5（R5）：「拥有形态」多选 —— 「包含」语义
   //   · 选中「电子版」/「纸质版」：该形态必须拥有（多项同时选中 = 都要有，即「双有」）
   //   · 选中「任意拥有」：拥有形态非空
+  //   · v6.5（需求 5）选中「均没有」：拥有形态为空（既无电子版也无纸质版）
   // 语义与旧的两个下拉等价（旧模型两个下拉之间是 AND），且额外支持「任意拥有」。
   if (f.拥有形态.length) {
     const own = r.拥有形态 ?? [];
-    const formats = f.拥有形态.filter((o) => o !== OWNERSHIP_ANY);
+    const formats = f.拥有形态.filter((o) => o !== OWNERSHIP_ANY && o !== OWNERSHIP_NONE);
     if (formats.length && !formats.every((o) => own.includes(o))) return false;
     if (f.拥有形态.includes(OWNERSHIP_ANY) && own.length === 0) return false;
+    if (f.拥有形态.includes(OWNERSHIP_NONE) && own.length !== 0) return false;
   }
   // 布尔三态
   if (f.做过 !== undefined && r.做过 !== f.做过) return false;
@@ -191,48 +194,36 @@ export function filterRecords(records: RecordItem[], f: Filters, planMembers?: P
 
 /**
  * 全文搜索：返回命中的记录 ID 集合。
- * 索引负责缩小候选集（倒排求交），长关键词再用子串校验保证精确。
+ *
+ * v6.5（需求 6）：改为**子串匹配** —— 之前拉丁词元按整词查倒排表，
+ * 「896文艺套装-上衣」这类名称搜「89」查不到（tokens 里只有「896」整词）。
+ * 现在直接对记录的检索文本做子串扫描，跨字段仍由不可见分隔符阻断；
+ * 但「#数字」编号查询保持精确匹配（子串会让「#1」误命中「#14」）。
  */
 export function searchIds(records: RecordItem[], query: string, idx?: Indexes): number[] {
   const q = String(query ?? '').trim().toLowerCase();
   if (!q) return records.map((r) => r.id);
 
-  const index = idx ?? buildIndexes(records);
   const segments = q.split(/[\s,，、]+/).filter(Boolean);
   if (!segments.length) return records.map((r) => r.id);
 
-  let candidates: number[] | null = null;
+  // 检索文本：优先用已构建的索引 blob（idx 覆盖全量记录时可直接复用）
+  const blobOf = (r: RecordItem): string => {
+    const cached = idx?.blobs.get(r.id);
+    return cached !== undefined ? cached : searchBlob(r);
+  };
 
-  for (const seg of segments) {
-    let segIds: number[] | null = null;
-    // v6（需求 5）：编号搜索 —— 「#7」与「7」都指向编号 7；
-    // 倒排索引按拉丁词元（纯数字）存储，因此查询时剥掉前导 # 再查。
-    const norm = CJK.test(seg) ? seg : seg.replace(/^#+/, '');
-    if (CJK.test(norm)) {
-      if (norm.length <= 3) {
-        segIds = index.tokens.get(norm) ?? [];
-      } else {
-        // 长中文词：先用 3 字词元缩小候选，再用子串精确校验
-        segIds = index.tokens.get(norm.slice(0, 3)) ?? [];
-      }
-    } else {
-      segIds = index.tokens.get(norm) ?? [];
-    }
-    candidates = candidates === null ? segIds : intersect(candidates, segIds);
-    if (candidates.length === 0) return [];
-  }
-
-  const hit = candidates ?? [];
-  // 长关键词需子串精确校验
-  return hit.filter((id) => {
-    const blob = index.blobs.get(id) ?? '';
-    return segments.every((seg) => blob.includes(seg));
-  });
-}
-
-function intersect(a: number[], b: number[]): number[] {
-  const set = new Set(b);
-  return a.filter((x) => set.has(x));
+  return records
+    .filter((r) => {
+      const blob = blobOf(r);
+      // 每段都要命中（段间取交集）：
+      // · 「#数字」是编号查询 —— 精确等于该编号（子串会让「#1」误命中「#14 / #150」）；
+      // · 其它段取子串命中（v6.5 需求 6：搜「89」要能命中「896文艺套装-上衣」）。
+      return segments.every((seg) => (
+        /^#\d+$/.test(seg) ? r.id === Number(seg.slice(1)) : blob.includes(seg)
+      ));
+    })
+    .map((r) => r.id);
 }
 
 /** 筛选 + 搜索叠加 */

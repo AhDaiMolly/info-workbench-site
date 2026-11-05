@@ -12,8 +12,8 @@ import { FilterPanel } from './FilterPanel';
 import { ColumnConfig } from './ColumnConfig';
 import { ConflictsBanner } from './ConflictsBanner';
 import { Modal } from '../../components/Modal';
-import { DEFAULT_VISIBLE_COLUMNS } from '../../schema';
-import { doneIcon, ownershipIcons, tutorialIcon, truncateTags } from './derivedCells';
+import { DEFAULT_VISIBLE_COLUMNS, HIDDEN_UI_FIELDS } from '../../schema';
+import { doneIcon, formatMarkIcon, rowAnnotation, tutorialIcon, truncateTags } from './derivedCells';
 import type { RecordItem, SortKey } from '../../types';
 
 const SORTABLE: SortKey[] = ['id', '名称', '更新时间'];
@@ -24,9 +24,12 @@ export function ListView() {
   const [pendingDelete, setPendingDelete] = useState<number | null>(null);
 
   // v6.4：旧偏好（localStorage）里可能还存着已删除的「标记」列——渲染前过滤并去重；
+  // v6.5（需求 1）：「推荐」「计划」全站隐藏，旧偏好里的这两列不再渲染；
+  // v6.5（需求 9）：旧偏好里的「形态」派生列拆成「电子」「纸质」两列；
   // 清洗后为空则回落到默认列集。
   const visible = useMemo(() => {
-    const cleaned = Array.from(new Set(visibleColumns.filter((c) => c !== '标记')));
+    const expanded = visibleColumns.flatMap((c) => (c === '形态' ? ['电子', '纸质'] : [c]));
+    const cleaned = Array.from(new Set(expanded.filter((c) => !HIDDEN_UI_FIELDS.includes(c))));
     return cleaned.length ? cleaned : DEFAULT_VISIBLE_COLUMNS;
   }, [visibleColumns]);
 
@@ -46,6 +49,14 @@ export function ListView() {
     else app.actions.setSort({ key, dir: key === '名称' ? 'asc' : 'desc' });
   };
 
+  /** v6.5（需求 8）：行标注色 —— 信息不全（灰）优先于无拥有形态（黄），两规则互不叠加 */
+  const rowClass = (r: RecordItem): string | undefined => {
+    const a = rowAnnotation(r);
+    if (a === 'incomplete') return 'iw-row-incomplete';
+    if (a === 'noformat') return 'iw-row-noformat';
+    return undefined;
+  };
+
   const renderCell = (col: string, r: RecordItem) => {
     if (col === '名称') {
       return (
@@ -56,15 +67,10 @@ export function ListView() {
         </span>
       );
     }
-    // v5（R5）：派生列「形态」—— 拥有形态的图标组合（💾 电子 / 📄 纸质）
-    if (col === '形态') {
-      const icons = ownershipIcons(r.拥有形态);
-      if (!icons.length) return <span className="iw-cell-muted">—</span>;
-      return (
-        <span className="iw-icon-cell" title="拥有形态">
-          {icons.map((ic, i) => <span key={i} className="iw-icon-cell-item">{ic}</span>)}
-        </span>
-      );
+    // v6.5（需求 9）：派生列「形态」拆成「电子」「纸质」两列 —— 各自按该记录是否勾选显示 ✓ / ×
+    if (col === '电子' || col === '纸质') {
+      const icon = formatMarkIcon(r.拥有形态, col === '电子' ? '电子版' : '纸质版');
+      return <span className="iw-icon-cell-item" title={col === '电子' ? '电子版' : '纸质版'}>{icon}</span>;
     }
     // v6.4：「做过」列（替代原「标记」派生列）—— 做过 = ✓，其余留空
     if (col === '做过') {
@@ -177,6 +183,7 @@ export function ListView() {
         onSavePreset={app.actions.savePreset}
         onDeletePreset={app.actions.deletePreset}
         plans={app.plans.map((p) => ({ id: p.id, name: p.名称 }))}
+        candidates={app.optionCandidates}
       />
 
       <div className="iw-table-wrap">
@@ -213,7 +220,7 @@ export function ListView() {
                 </td>
               </tr>
             ) : pageRows.map((r) => (
-              <tr key={r.id}>
+              <tr key={r.id} className={rowClass(r)}>
                 {visible.map((col) => (
                     <td key={col} className={col === '名称' ? 'iw-col-name' : undefined}>
                       {col === '名称' ? (

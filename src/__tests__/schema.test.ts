@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   CATEGORY_ORDER, DEFAULT_SCHEMA, DEFAULT_VISIBLE_COLUMNS, DERIVED_LIST_COLUMNS, FIELD_DEFAULTS,
-  LEGACY_ESIZE_GROUP_MAP, OWNERSHIP_ANY, OWNERSHIP_FORMAT_OPTIONS, OWNERSHIP_FILTER_OPTIONS, OWNERSHIP_TRISTATE_OPTIONS,
+  HIDDEN_UI_FIELDS, LEGACY_ESIZE_GROUP_MAP, OWNERSHIP_ANY, OWNERSHIP_FILTER_OPTIONS, OWNERSHIP_FORMAT_OPTIONS,
+  OWNERSHIP_NONE, OWNERSHIP_TRISTATE_OPTIONS,
   PAPER_SIZE_HEIGHT_TAGS, PAPER_SIZE_LETTER_TAGS, REMOVED_FIELD_KEYS,
   SEASON_OPTIONS, defaultValueFor, mergeSchema, stripLegacyOptions,
 } from '../schema';
@@ -56,7 +57,22 @@ describe('内置 schema', () => {
 
   it('v5：筛选项含保留值「任意拥有」', () => {
     expect(OWNERSHIP_ANY).toBe('任意拥有');
-    expect(OWNERSHIP_FILTER_OPTIONS).toEqual(['电子版', '纸质版', '任意拥有']);
+    expect(OWNERSHIP_FILTER_OPTIONS).toContain('电子版');
+    expect(OWNERSHIP_FILTER_OPTIONS).toContain('纸质版');
+    expect(OWNERSHIP_FILTER_OPTIONS).toContain('任意拥有');
+  });
+
+  it('v6.5（需求 5）：筛选项新增保留值「均没有」', () => {
+    expect(OWNERSHIP_NONE).toBe('均没有');
+    expect(OWNERSHIP_FILTER_OPTIONS).toEqual(['电子版', '纸质版', '任意拥有', '均没有']);
+  });
+
+  it('v6.5（需求 1）：全站隐藏字段为「推荐」「计划」', () => {
+    expect(HIDDEN_UI_FIELDS).toEqual(['推荐', '计划']);
+    // 隐藏只是展示层行为 —— 字段仍在 schema 里，数据原样保留
+    const keys = DEFAULT_SCHEMA.fields.map((f) => f.key);
+    expect(keys).toContain('推荐');
+    expect(keys).toContain('计划');
   });
 
   it('季节为枚举单选，选项含「春秋」且不拆分', () => {
@@ -73,20 +89,25 @@ describe('内置 schema', () => {
   });
 });
 
-describe('列表默认列（v6.4 口径）', () => {
-  it('默认 8 列：名称 / 品牌 / 分类 / 款式 / 季节 / 形态 / 教程 / 做过', () => {
+describe('列表默认列（v6.5 口径）', () => {
+  it('默认 9 列：名称 / 品牌 / 分类 / 款式 / 季节 / 电子 / 纸质 / 教程 / 做过', () => {
     expect(DEFAULT_VISIBLE_COLUMNS).toEqual([
-      '名称', '品牌', '分类', '款式', '季节', '形态', '教程', '做过',
+      '名称', '品牌', '分类', '款式', '季节', '电子', '纸质', '教程', '做过',
     ]);
-    expect(DEFAULT_VISIBLE_COLUMNS.length).toBe(8);
+    expect(DEFAULT_VISIBLE_COLUMNS.length).toBe(9);
   });
 
-  it('v6.4：「形态」是唯一的派生列；「标记」列删除，「做过」是数据字段不再是派生列', () => {
-    expect(DERIVED_LIST_COLUMNS).toEqual(['形态']);
+  it('v6.5（需求 9）：派生列由「形态」拆成「电子」「纸质」两列', () => {
+    expect(DERIVED_LIST_COLUMNS).toEqual(['电子', '纸质']);
     const keys = DEFAULT_SCHEMA.fields.map((f) => f.key);
     expect(keys).not.toContain('形态');
     expect(keys).not.toContain('标记');
     expect(keys).toContain('做过');
+  });
+
+  it('v6.5（需求 1）：默认列里不再有「推荐」「计划」', () => {
+    expect(DEFAULT_VISIBLE_COLUMNS).not.toContain('推荐');
+    expect(DEFAULT_VISIBLE_COLUMNS).not.toContain('计划');
   });
 
   it('R3：尺码与备注收进详情页，不在默认列里', () => {

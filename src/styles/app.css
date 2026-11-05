@@ -258,7 +258,14 @@
   position: relative;
 }
 
-.iw-search .iw-input { padding-left: 32px; }
+.iw-search .iw-input { padding-left: 32px; padding-right: 72px; }
+/* v6.5（需求 7）：隐藏原生 type="search" 的清空按钮（它被结果徽标挡住，点不到），
+   统一由自绘的「×」按钮负责清空 */
+.iw-search input[type="search"]::-webkit-search-cancel-button,
+.iw-search input[type="search"]::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
 .iw-search-icon {
   position: absolute;
   left: 10px;
@@ -268,6 +275,29 @@
   pointer-events: none;
   font-size: 13px;
 }
+/* v6.5（需求 7）：自绘清空按钮 */
+.iw-search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--iw-text-3);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.iw-search-clear:hover { background: var(--iw-s2); color: var(--iw-text-1); }
+/* 结果徽标只做展示，不拦截点击（此前它盖住原生 × 导致清空失效） */
+.iw-search-count { pointer-events: none; }
 
 .iw-filter-panel {
   border: 1px solid var(--iw-border);
@@ -336,6 +366,13 @@
 
 .iw-table tbody tr:hover { background: var(--iw-surface); }
 .iw-table tbody tr:last-child td { border-bottom: none; }
+
+/* v6.5（需求 8）：列表行标注色 —— 分类/款式/季节任一为空 → 浅灰；三者齐全但拥有形态为空 → 浅黄。
+   灰优先于黄（两规则互不叠加），配色克制，深色文字保持可读。 */
+.iw-table tbody tr.iw-row-incomplete { background: var(--iw-row-incomplete); }
+.iw-table tbody tr.iw-row-incomplete:hover { background: var(--iw-row-incomplete-hover); }
+.iw-table tbody tr.iw-row-noformat { background: var(--iw-row-noformat); }
+.iw-table tbody tr.iw-row-noformat:hover { background: var(--iw-row-noformat-hover); }
 
 .iw-table .iw-col-name { white-space: normal; min-width: 220px; font-weight: 500; }
 .iw-cell-muted { color: var(--iw-text-3); }

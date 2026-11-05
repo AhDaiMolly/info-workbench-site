@@ -11,12 +11,71 @@
 
 import type { FieldDef, FieldOptionsState, ManagedFieldOptions, OptionsFile, Schema } from '../types';
 import type { PendingChange } from './persist';
+import { PAPER_SIZE_HEIGHT_TAGS, PAPER_SIZE_LETTER_TAGS } from '../schema';
 
 /** options.json 的当前结构版本 */
 export const OPTIONS_SCHEMA_VERSION = 1;
 
 /** 待同步队列里字段选项改动的字段标记（字段[0] 固定为「字段选项」，字段[1] 为字段 jsonKey） */
 export const OPTIONS_PENDING_FIELD = '字段选项';
+
+/**
+ * v6.5（需求 3）：受选项管理的尺码字段（tags 类型，基础选项集内置在代码里，不在 schema.options 里）。
+ *
+ * 两个尺码字段各自独立管理：电子版尺码、纸质版尺码。
+ */
+export const SIZE_MANAGED_KEYS = ['电子版尺码', '纸质版尺码'];
+
+/** 尺码选项是否归「身高码」组（纯数字，2~3 位，如 80 / 155 / 180） */
+const HEIGHT_CODE_RE = /^\d{2,3}$/;
+
+/** 尺码字段的基础候选全集（字母码 + 身高码，内置常量，不随数据仓变化） */
+export const BASE_SIZE_TAGS = [...PAPER_SIZE_LETTER_TAGS, ...PAPER_SIZE_HEIGHT_TAGS];
+
+export interface SizeGroups {
+  /** 字母码组（XS–4XL 及新增的非数字码） */
+  letters: string[];
+  /** 身高码组（80–180 及新增的数字码），按数值升序 */
+  heights: string[];
+}
+
+/**
+ * v6.5（需求 3）：尺码字段的当前候选项（基础快捷集 ∪ 手动新增 − 已删除）。
+ *
+ * 规则：
+ *   · 数字型新增值（如 165、95）归入「身高码」组，并按数值升序排列；
+ *   · 其它新增值（如 5XL）归入「字母码」组，追加在基础字母码之后；
+ *   · 删除只影响候选，历史记录里已填的尺码原样保留、照常显示。
+ */
+export function effectiveSizeGroups(managed: ManagedFieldOptions | undefined): SizeGroups {
+  const removed = new Set(managed?.removed ?? []);
+  const added = managed?.added ?? [];
+
+  const letters: string[] = [];
+  for (const t of PAPER_SIZE_LETTER_TAGS) if (!removed.has(t)) letters.push(t);
+  for (const a of added) {
+    if (removed.has(a)) continue;
+    if (HEIGHT_CODE_RE.test(a)) continue;
+    if (!letters.includes(a)) letters.push(a);
+  }
+
+  const heights: string[] = [];
+  for (const t of PAPER_SIZE_HEIGHT_TAGS) if (!removed.has(t)) heights.push(t);
+  for (const a of added) {
+    if (removed.has(a)) continue;
+    if (!HEIGHT_CODE_RE.test(a)) continue;
+    if (!heights.includes(a)) heights.push(a);
+  }
+  heights.sort((a, b) => Number(a) - Number(b));
+
+  return { letters, heights };
+}
+
+/** 尺码候选项平铺列表（字母码在前、身高码在后） */
+export function effectiveSizeTags(managed: ManagedFieldOptions | undefined): string[] {
+  const g = effectiveSizeGroups(managed);
+  return [...g.letters, ...g.heights];
+}
 
 /* ------------------------------ 结构归一 ------------------------------ */
 
@@ -79,6 +138,15 @@ export function managedFieldKeys(schema: Schema): string[] {
   return schema.fields
     .filter((f: FieldDef) => f.type === 'enum' && f.allowNew && !f.system && !f.readonly)
     .map((f) => f.jsonKey);
+}
+
+/**
+ * v6.5（需求 3）：全部受选项管理的字段 —— allowNew 枚举（品牌 / 款式）+ 尺码字段（电子版尺码 / 纸质版尺码）。
+ */
+export function managedOptionKeys(schema: Schema): string[] {
+  const enumKeys = managedFieldKeys(schema);
+  const sizeKeys = SIZE_MANAGED_KEYS.filter((k) => schema.fields.some((f: FieldDef) => f.jsonKey === k));
+  return [...enumKeys, ...sizeKeys];
 }
 
 /** 无管理状态时返回 schema 选项本身（同一数组内容重新包装，不修改入参） */

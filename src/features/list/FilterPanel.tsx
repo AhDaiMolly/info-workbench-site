@@ -15,7 +15,7 @@ import type { Filters, Schema } from '../../types';
 import { EMPTY_FILTERS } from '../../types';
 import { hasActiveFilters } from '../../store/selectors';
 import {
-  OWNERSHIP_ANY, OWNERSHIP_FORMAT_OPTIONS, PAPER_SIZE_LETTER_TAGS, PAPER_SIZE_HEIGHT_TAGS,
+  OWNERSHIP_ANY, OWNERSHIP_NONE, OWNERSHIP_FORMAT_OPTIONS, PAPER_SIZE_LETTER_TAGS, PAPER_SIZE_HEIGHT_TAGS,
 } from '../../schema';
 
 interface Props {
@@ -29,33 +29,58 @@ interface Props {
   onDeletePreset: (id: string) => void;
   /** v6.2（需求 1）：可选中的计划清单（value = 清单 ID，展示为清单名称） */
   plans?: Array<{ id: string; name: string }>;
+  /**
+   * v6.5（需求 2/3）：各字段的当前录入候选（设置页增删后即时同步到此）。
+   * 键为字段 jsonKey（品牌 / 款式 / 电子版尺码 / 纸质版尺码 …）。
+   */
+  candidates?: Record<string, string[]>;
 }
 
 function optionsOf(schema: Schema, key: string): string[] {
   return schema.fields.find((f) => f.key === key)?.options ?? [];
 }
 
+/** 候选集优先（设置页增删后即时生效），为空时回落 schema 内置选项 */
+function pickCandidates(candidates: Record<string, string[]> | undefined, key: string, fallback: string[]): string[] {
+  const list = candidates?.[key];
+  return list && list.length ? list : fallback;
+}
+
 export function FilterPanel(props: Props) {
-  const { filters, schema, onChange, onClear, presets, onApplyPreset, onSavePreset, onDeletePreset, plans } = props;
+  const { filters, schema, onChange, onClear, presets, onApplyPreset, onSavePreset, onDeletePreset, plans, candidates } = props;
   const [open, setOpen] = useState(false);
   const [presetName, setPresetName] = useState('');
 
-  const brandOptions = useMemo(() => optionsOf(schema, '品牌'), [schema]);
-  const styleOptions = useMemo(() => optionsOf(schema, '款式'), [schema]);
-  // v5（R5）：两个旧下拉合并为一个「拥有形态」多选；「任意拥有」是筛选项而非数据取值
+  // v6.5（需求 2）：品牌 / 款式的筛选项跟随设置页「字段选项管理」即时增删
+  const brandOptions = useMemo(
+    () => pickCandidates(candidates, '品牌', optionsOf(schema, '品牌')),
+    [candidates, schema],
+  );
+  const styleOptions = useMemo(
+    () => pickCandidates(candidates, '款式', optionsOf(schema, '款式')),
+    [candidates, schema],
+  );
+  // v5（R5）：两个旧下拉合并为一个「拥有形态」多选；「任意拥有」「均没有」是筛选项而非数据取值
   const ownershipFilterOptions = useMemo(() => {
     const fromSchema = optionsOf(schema, '拥有形态');
     const base = fromSchema.length ? fromSchema : OWNERSHIP_FORMAT_OPTIONS;
-    return base.includes(OWNERSHIP_ANY) ? base : [...base, OWNERSHIP_ANY];
+    const withAny = base.includes(OWNERSHIP_ANY) ? base : [...base, OWNERSHIP_ANY];
+    // v6.5（需求 5）：追加「均没有」—— 既未勾电子版、也未勾纸质版
+    return withAny.includes(OWNERSHIP_NONE) ? withAny : [...withAny, OWNERSHIP_NONE];
   }, [schema]);
-  // v6.1（需求 3）：「电子版尺码」改为标签双轨（tags 无 options），筛选项固定为两组快捷标签；
+  // v6.5（需求 4）：筛选项改名为「尺码」，命中口径为「电子版尺码 或 纸质版尺码 任一含有该尺码」；
+  // 选项集取两个尺码字段候选的并集（设置页增删后即时同步）；
   // 旧筛选方案里遗留的旧「尺码组」取值（女士全码 等）也一并展示为可点除的标签
   const esizeFilterOptions = useMemo(() => {
-    const base = [...PAPER_SIZE_LETTER_TAGS, ...PAPER_SIZE_HEIGHT_TAGS];
-    const extra = (filters.电子版尺码 ?? []).filter((o) => !base.includes(o));
-    return [...base, ...extra];
+    const base = [
+      ...pickCandidates(candidates, '电子版尺码', [...PAPER_SIZE_LETTER_TAGS, ...PAPER_SIZE_HEIGHT_TAGS]),
+      ...pickCandidates(candidates, '纸质版尺码', []),
+    ];
+    const merged = Array.from(new Set(base));
+    const extra = (filters.电子版尺码 ?? []).filter((o) => !merged.includes(o));
+    return [...merged, ...extra];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schema, filters.电子版尺码]);
+  }, [candidates, filters.电子版尺码]);
 
   const activeCount = Object.entries(filters).reduce((acc, [k, v]) => {
     if (Array.isArray(v)) return acc + v.length;
@@ -149,7 +174,7 @@ export function FilterPanel(props: Props) {
           <div className="iw-filter-grid">
             <div>
               <div className="iw-filter-block-title">品牌</div>
-              {chips('品牌', brandOptions.length ? brandOptions : ['（连接数据仓后可选）'])}
+              {chips('品牌', brandOptions.length ? brandOptions : ['（连接数据仓后可选）'], '品牌')}
             </div>
             <div>
               <div className="iw-filter-block-title">分类</div>
@@ -157,7 +182,7 @@ export function FilterPanel(props: Props) {
             </div>
             <div>
               <div className="iw-filter-block-title">款式</div>
-              {chips('款式', styleOptions.length ? styleOptions : ['（连接数据仓后可选）'])}
+              {chips('款式', styleOptions.length ? styleOptions : ['（连接数据仓后可选）'], '款式')}
             </div>
             <div>
               <div className="iw-filter-block-title">季节</div>
@@ -165,12 +190,13 @@ export function FilterPanel(props: Props) {
             </div>
             <div>
               <div className="iw-filter-block-title">教程</div>
-              {chips('教程', optionsOf(schema, '教程'))}
+              {chips('教程', optionsOf(schema, '教程'), '教程')}
             </div>
             {/* v6.4（需求 7）：筛选面板移除「推荐」「计划」入口（旧筛选方案 / 旧 URL 仍可解析，只是不再展示） */}
+            {/* v6.5（需求 4）：标题由「电子版尺码」改为「尺码」，命中口径为电子版或纸质版任一含有 */}
             <div>
-              <div className="iw-filter-block-title">电子版尺码</div>
-              {chips('电子版尺码', esizeFilterOptions, '电子版尺码')}
+              <div className="iw-filter-block-title">尺码</div>
+              {chips('电子版尺码', esizeFilterOptions, '尺码')}
             </div>
             <div>
               <div className="iw-filter-block-title">拥有形态</div>

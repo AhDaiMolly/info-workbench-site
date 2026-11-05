@@ -13,6 +13,7 @@ import { useApp } from '../../store/store';
 import { findShellRecords } from '../../store/migrations';
 import { Modal } from '../../components/Modal';
 import { BUILD_INFO, buildInfoText, buildDateText } from '../../version';
+import { SIZE_MANAGED_KEYS } from '../../store/options';
 
 /** v6.4（需求 2）：设置页二级导航分组 —— 设置项按类别归组，点导航只渲染当前分组的卡片。
  *  连接与同步 = 数据仓库连接 + 同步和备份；数据管理 = 导出 / 数据体检 / 待确认清单。 */
@@ -37,6 +38,8 @@ export function SettingsView() {
   const [newPlanName, setNewPlanName] = useState('');
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; count: number } | null>(null);
+  // v6.5（需求 2/3）：各字段的新增选项草稿（按字段 jsonKey 分开）
+  const [optionDrafts, setOptionDrafts] = useState<Record<string, string>>({});
   // v6.3（需求 2）：字段选项管理的删除确认目标
   const [optionDeleteTarget, setOptionDeleteTarget] = useState<{
     fieldKey: string; fieldLabel: string; value: string; usage: number;
@@ -400,33 +403,89 @@ export function SettingsView() {
       <div className="iw-settings-card">
         <h2 className="iw-settings-title">字段选项管理</h2>
         {(() => {
-          const managed = app.schema.fields.filter(
+          // v6.5（需求 2/3）：受管字段 = allowNew 枚举（品牌 / 款式）+ 两个尺码字段（电子版尺码 / 纸质版尺码）
+          const enumFields = app.schema.fields.filter(
             (f) => f.type === 'enum' && f.allowNew && !f.system && !f.readonly,
           );
-          const usageOf = (fieldKey: string, value: string) =>
-            app.records.filter(
+          const sizeFields = SIZE_MANAGED_KEYS
+            .filter((k) => app.schema.fields.some((f) => f.jsonKey === k))
+            .map((k) => ({
+              jsonKey: k,
+              label: k,
+              format: k === '电子版尺码' ? '电子版' : '纸质版',
+            }));
+          const fields: Array<{ jsonKey: string; label: string; format?: string }> = [
+            ...enumFields.map((f) => ({ jsonKey: f.jsonKey, label: f.label })),
+            ...sizeFields,
+          ];
+          /** 选项被多少条记录用到 —— 枚举按字段值计数；尺码按「拥有该形态且含该码」计数 */
+          const usageOf = (fieldKey: string, value: string, format?: string) => {
+            if (format) {
+              return app.records.filter((r) => {
+                const owns = (r.拥有形态 ?? []) as string[];
+                const sizes = ((r as unknown as Record<string, unknown>)[fieldKey] ?? []) as string[];
+                return owns.includes(format) && sizes.includes(value);
+              }).length;
+            }
+            return app.records.filter(
               (r) => String((r as unknown as Record<string, unknown>)[fieldKey] ?? '') === value,
             ).length;
-          if (!managed.length) {
-            return <div className="iw-field-hint">当前没有支持自由输入的枚举字段。</div>;
+          };
+          if (!fields.length) {
+            return <div className="iw-field-hint">当前没有可配置的字段选项。</div>;
           }
           return (
             <div data-testid="iw-options-admin">
-              {managed.map((f) => {
+              {fields.map((f) => {
                 const candidates = app.optionCandidates?.[f.jsonKey] ?? [];
                 const removed = app.options?.[f.jsonKey]?.removed ?? [];
+                const draft = optionDrafts[f.jsonKey] ?? '';
                 return (
                   <div key={f.jsonKey} style={{ marginBottom: 16 }} data-testid={`iw-options-field-${f.jsonKey}`}>
                     <div className="iw-plan-name" style={{ marginBottom: 8 }}>{f.label}</div>
+                    {/* v6.5（需求 2/3）：在这里直接新增选项 —— 增删后筛选下拉与表单下拉即时同步 */}
+                    <div className="iw-toolbar" style={{ marginBottom: 8 }}>
+                      <input
+                        className="iw-input"
+                        style={{ maxWidth: 200 }}
+                        placeholder={`新增${f.label}选项`}
+                        value={draft}
+                        aria-label={`新增${f.label}选项`}
+                        data-testid={`iw-option-add-input-${f.jsonKey}`}
+                        onChange={(e) => setOptionDrafts((s) => ({ ...s, [f.jsonKey]: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter') return;
+                          e.preventDefault();
+                          const v = draft.trim();
+                          if (!v) return;
+                          app.actions.addFieldOption(f.jsonKey, v);
+                          setOptionDrafts((s) => ({ ...s, [f.jsonKey]: '' }));
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="iw-btn iw-btn-sm"
+                        data-testid={`iw-option-add-${f.jsonKey}`}
+                        disabled={!draft.trim()}
+                        onClick={() => {
+                          const v = draft.trim();
+                          if (!v) return;
+                          app.actions.addFieldOption(f.jsonKey, v);
+                          setOptionDrafts((s) => ({ ...s, [f.jsonKey]: '' }));
+                        }}
+                      >
+                        新增
+                      </button>
+                    </div>
                     <div className="iw-chip-group">
                       {candidates.length === 0 ? (
-                        <div className="iw-field-hint">暂无候选选项；在表单里输入新值保存后会自动加入。</div>
+                        <div className="iw-field-hint">暂无候选选项；在上方输入框新增，或在表单里输入新值保存后自动加入。</div>
                       ) : (
                         candidates.map((v) => (
-                          <div className="iw-plan-row" key={v} data-testid={`iw-option-row-${f.jsonKey}`}>
+                          <div key={v} className="iw-plan-row" data-testid={`iw-option-row-${f.jsonKey}`}>
                             <span className="iw-plan-name">
                               {v}
-                              <span className="iw-plan-count">（{usageOf(f.jsonKey, v)} 条记录在用）</span>
+                              <span className="iw-plan-count">（{usageOf(f.jsonKey, v, f.format)} 条记录在用）</span>
                             </span>
                             <button
                               type="button"
@@ -437,7 +496,7 @@ export function SettingsView() {
                                 fieldKey: f.jsonKey,
                                 fieldLabel: f.label,
                                 value: v,
-                                usage: usageOf(f.jsonKey, v),
+                                usage: usageOf(f.jsonKey, v, f.format),
                               })}
                             >
                               删除
@@ -471,8 +530,9 @@ export function SettingsView() {
           );
         })()}
         <div className="iw-field-hint">
-          品牌、款式支持直接输入新值，保存后会自动加入这里的候选。删除选项只影响后续录入的下拉候选，
-          历史记录的取值保持原样显示，不受影响。
+          品牌、款式支持直接输入新值，保存后会自动加入这里的候选；尺码分「电子版尺码」「纸质版尺码」两组，
+          字母码与身高码可分别增删。这里的增删会即时同步到筛选条件与录入表单的下拉候选。
+          删除选项只影响后续录入的下拉候选，历史记录的取值保持原样显示，不受影响。
         </div>
       </div>
       ) : null}

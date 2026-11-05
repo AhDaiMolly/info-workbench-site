@@ -122,12 +122,12 @@ describe('编辑表单：分区版面（v6.4 起 4 分区 + 计划清单）', ()
     expect(container.textContent).not.toContain('2026-01-02');
   });
 
-  it('v6.4（需求 7）：编辑表单保留「推荐」「计划」字段（供手动调整存量数据）', () => {
+  it('v6.5（需求 1）：编辑表单不再渲染「推荐」「计划」字段（存量数据原样保留）', () => {
     const { container } = render(<EditorForm recordId={7} />);
     const section = container.querySelectorAll('.iw-form-section')[2]; // 「状态及评价」分区
     const labels = Array.from(section.querySelectorAll('.iw-label')).map((el) => el.textContent);
-    expect(labels).toContain('推荐');
-    expect(labels).toContain('计划');
+    expect(labels).not.toContain('推荐');
+    expect(labels).not.toContain('计划');
     expect(labels).toContain('做过');
   });
 
@@ -207,6 +207,18 @@ describe('v5 · R5 拥有形态多选', () => {
     expect(payload.拥有形态).toEqual(['电子版', '纸质版']);
     expect((payload as Record<string, unknown>).电子版).toBeUndefined();
     expect((payload as Record<string, unknown>).纸质版).toBeUndefined();
+  });
+
+  it('v6.5：已有纸质版再勾电子版，保存值仍按固定选项序（不产生同步阻断的逆序值）', () => {
+    records = [{ ...sampleRecord, id: 8, 拥有形态: ['纸质版'] } as RecordItem];
+    const { container } = render(<EditorForm recordId={8} />);
+    const group = container.querySelector('[role="group"][aria-label="拥有形态"]')!;
+    fireEvent.click(Array.from(group.querySelectorAll('button'))[0]);
+    fireEvent.click(screen.getAllByText('保存')[0]);
+    const payload = updateRecordMock.mock.calls[0][1];
+    // 旧实现 append 会得到 ['纸质版','电子版']，被 validateRecords 多值顺序校验拦下，
+    // syncNow 在联网前 return，同步永久阻断（v6.5 冒烟 v6.2-6/v6.3-6 的根因）
+    expect(payload.拥有形态).toEqual(['电子版', '纸质版']);
   });
 });
 
@@ -420,19 +432,16 @@ describe('v6.1 · 需求 1 「拥有形态」分区字段顺序', () => {
     expect(labels.indexOf('电子版尺码')).toBeLessThan(labels.indexOf('纸质版尺码'));
   });
 
-  it('「状态及评价」分区顺序：做过 → 推荐 → 计划', () => {
+  it('「状态及评价」分区 v6.5 口径：只有「做过」，不再渲染推荐/计划', () => {
     const { container } = render(<EditorForm recordId={7} />);
     const section = container.querySelectorAll('.iw-form-section')[2]; // 「状态及评价」分区
     const text = section.textContent ?? '';
-    expect(text.indexOf('做过')).toBeLessThan(text.indexOf('推荐'));
-    expect(text.indexOf('推荐')).toBeLessThan(text.indexOf('计划'));
-    // 旧选项值已消失（「不想做」是合法新枚举，不能被「想做」子串断言误伤）
-    const selectValues = Array.from(section.querySelectorAll('select option')).map(
-      (o) => (o as HTMLOptionElement).value,
-    );
-    expect(selectValues).not.toContain('想做');
-    expect(selectValues).not.toContain('不确定');
-    expect(selectValues).toContain('不想做');
+    expect(text).toContain('做过');
+    expect(text).not.toContain('推荐');
+    expect(text).not.toContain('计划');
+    // 「做过」仍可交互（两态切换）
+    const labels = Array.from(section.querySelectorAll('.iw-label')).map((el) => el.textContent);
+    expect(labels).toContain('做过');
   });
 });
 
@@ -472,17 +481,14 @@ describe('v6.1 · 需求 3 电子版尺码快捷标签与联动', () => {
   });
 });
 
-describe('v6.1 · 需求 2 「计划」字段表单交互', () => {
-  it('「计划」下拉选项为 在计划中 / 不想做 / 不是现在 / 未标记（旧选项消失）', () => {
+describe('v6.1 · 需求 2 「计划」字段表单交互（v6.5 已隐藏）', () => {
+  it('v6.5：编辑表单不再渲染「推荐」「计划」任何输入控件', () => {
     const { container } = render(<EditorForm recordId={7} />);
-    // 直接用 id 定位「计划」下拉（分区里第一个 select 是「推荐」，不能用 section.querySelector('select')）
-    const select = container.querySelector('#fld-计划') as HTMLSelectElement | null;
-    expect(select).not.toBeNull();
-    const options = Array.from(select!.options).map((o) => o.value);
-    // 枚举下拉首位是占位「（未填）」
-    expect(options).toEqual(['', '在计划中', '不想做', '不是现在', '未标记']);
-    expect(options).not.toContain('想做');
-    expect(options).not.toContain('不确定');
+    expect(container.querySelector('#fld-计划')).toBeNull();
+    expect(container.querySelector('#fld-推荐')).toBeNull();
+    const labels = Array.from(container.querySelectorAll('.iw-label')).map((el) => el.textContent);
+    expect(labels).not.toContain('推荐');
+    expect(labels).not.toContain('计划');
   });
 });
 

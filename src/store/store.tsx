@@ -32,8 +32,9 @@ import {
   removeRecordFromPlan, renamePlan as renamePlanList,
 } from './plans';
 import {
-  addOptionValue, effectiveOptions as effectiveOptionsFor, makeOptionsFile, mergeOptionsSync,
+  addOptionValue, BASE_SIZE_TAGS, effectiveOptions as effectiveOptionsFor, effectiveSizeTags, makeOptionsFile, mergeOptionsSync,
   normalizeOptionsState, optionsStateEqual, parseOptionsFile, removeOptionValue, restoreOptionValue,
+  SIZE_MANAGED_KEYS,
 } from './options';
 import { GithubClient, GithubError, parseRepoUrl } from '../sync/github';
 import { hasContentDiff, type FieldDiff } from '../sync/conflict';
@@ -744,6 +745,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     /** 某字段的当前录入候选（schema 选项 ∪ 已沉淀 − 已删除） */
     const candidatesOf = (st: AppState, fieldKey: string): string[] => {
+      // v6.5（需求 3）：尺码字段的基础候选内置在代码里（tags 类型，schema 里没有 options）
+      if (SIZE_MANAGED_KEYS.includes(fieldKey)) return effectiveSizeTags(st.options[fieldKey]);
       const f = st.schema.fields.find((x) => x.jsonKey === fieldKey);
       const opts = f?.type === 'enum' && f.allowNew ? f.options ?? [] : [];
       return effectiveOptionsFor(opts, st.options[fieldKey]);
@@ -769,7 +772,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const restoreFieldOptionAction = (fieldKey: string, value: string) => {
       const st = current();
-      const inSchema = st.schema.fields.find((x) => x.jsonKey === fieldKey)?.options?.includes(value) ?? false;
+      // v6.5（需求 3）：尺码字段的基础候选（字母码 / 身高码）内置在代码里，
+      // 恢复它们等同于恢复内置项 —— 回到原位置，而不是被当成「新增项」追加到末尾。
+      const inSchema = st.schema.fields.find((x) => x.jsonKey === fieldKey)?.options?.includes(value)
+        || (SIZE_MANAGED_KEYS.includes(fieldKey) && BASE_SIZE_TAGS.includes(value));
       const options = restoreOptionValue(st.options, fieldKey, value, inSchema);
       if (options === st.options) return;
       dispatch({ type: 'SET_OPTIONS', options, changes: [optionChange(fieldKey, '编辑')] });
@@ -1474,11 +1480,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /* -------- v6.2（需求 1）：计划清单成员索引（列表筛选 / 详情展示共用派生） -------- */
   const planMembers = useMemo(() => buildPlanMembers(state.plans), [state.plans]);
 
-  /* -------- v6.3（需求 2）：受管字段的录入候选（schema 选项 ∪ 沉淀 − 删除） -------- */
+  /* -------- v6.3（需求 2）：受管字段的录入候选（schema 选项 ∪ 沉淀 − 删除） --------
+   * v6.5（需求 3）：尺码字段的候选同样纳入这里（基础候选内置在代码里）。 */
   const optionCandidates = useMemo(() => {
     const out: Record<string, string[]> = {};
     for (const f of state.schema.fields) {
-      if (f.type !== 'enum' || !f.allowNew || f.system || f.readonly) continue;
+      if (f.system || f.readonly) continue;
+      if (SIZE_MANAGED_KEYS.includes(f.jsonKey)) {
+        out[f.jsonKey] = effectiveSizeTags(state.options[f.jsonKey]);
+        continue;
+      }
+      if (f.type !== 'enum' || !f.allowNew) continue;
       out[f.jsonKey] = effectiveOptionsFor(f.options ?? [], state.options[f.jsonKey]);
     }
     return out;

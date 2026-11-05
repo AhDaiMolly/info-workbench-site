@@ -308,7 +308,9 @@ function apiPayload(name, buf) {
       expectTotal > 0
         ? bs1.present
           && bs1.text.includes(`待人工确认清单：${pendingExpect.conflicts.length} 条矛盾记录`)
-          && bs1.text.includes(`${pendingExpect.suggestions.length} 条建议补全`)
+          && (pendingExpect.suggestions.length
+            ? bs1.text.includes(`${pendingExpect.suggestions.length} 条建议补全`)
+            : !bs1.text.includes('条建议补全'))
         : !bs1.present,
       bs1.present ? bs1.text.slice(0, 100) : '横幅未显示');
     const staleOldTerms = ['拥有电子版', '电子版尺码组', '想做'];
@@ -340,10 +342,14 @@ function apiPayload(name, buf) {
       const storedIgnored = await page.evaluate(() => {
         try { return JSON.parse(localStorage.getItem('iw.ignoredChecks') || '[]'); } catch (e) { return []; }
       });
+      // 忽略唯一条目后剩余可能为 0 —— 横幅会整体收起（ConflictsBanner return null）
+      const remainAfterIgnore = pendingExpect.conflicts.length - 1 + pendingExpect.suggestions.length;
       record('v6.1.1-3 单条「忽略」后条目从横幅消失并写入本地存储',
-        clickedIg && bs2.present
-          && bs2.text.includes(`待人工确认清单：${pendingExpect.conflicts.length - 1} 条矛盾记录`)
-          && !bs2.text.includes(`#${igItem.id} `)
+        clickedIg && (remainAfterIgnore > 0
+          ? bs2.present
+            && bs2.text.includes(`待人工确认清单：${pendingExpect.conflicts.length - 1} 条矛盾记录`)
+            && !bs2.text.includes(`#${igItem.id} `)
+          : !bs2.present)
           && storedIgnored.length === 1 && storedIgnored[0].key === igKey,
         `点击 ${clickedIg}，忽略键 ${storedIgnored.length ? storedIgnored[0].key : '无'}，横幅 ${bs2.present ? bs2.text.slice(0, 60) : '消失'}`);
 
@@ -352,9 +358,11 @@ function apiPayload(name, buf) {
       await new Promise((r) => setTimeout(r, 400));
       const bs3 = await bannerState();
       record('v6.1.1-4 刷新后忽略仍然生效（本地持久化，不随页面重开复原）',
-        bs3.present
-          && bs3.text.includes(`待人工确认清单：${pendingExpect.conflicts.length - 1} 条矛盾记录`)
-          && !bs3.text.includes(`#${igItem.id} `),
+        remainAfterIgnore > 0
+          ? bs3.present
+            && bs3.text.includes(`待人工确认清单：${pendingExpect.conflicts.length - 1} 条矛盾记录`)
+            && !bs3.text.includes(`#${igItem.id} `)
+          : !bs3.present,
         bs3.present ? bs3.text.slice(0, 80) : '横幅未显示');
 
       // 设置页：查看已忽略项并「恢复」→ 重新出现在横幅
@@ -396,18 +404,20 @@ function apiPayload(name, buf) {
       await new Promise((r) => setTimeout(r, 800));
       await goto('/list');
       bs5 = await bannerState();
+      // 修复唯一矛盾后剩余可能为 0 —— 横幅整体收起
+      const remainAfterFix = pendingExpect.conflicts.length - 1 + pendingExpect.suggestions.length;
       record('v6.1.1-6 修复记录后矛盾条目自动从清单消失（动态重算，无需静态快照）',
-        ticked && savedFix && bs5.present
-          && !bs5.text.includes(`#${igItem.id} `)
-          && bs5.text.includes(`待人工确认清单：${pendingExpect.conflicts.length - 1} 条矛盾记录`),
+        ticked && savedFix && (remainAfterFix > 0
+          ? bs5.present && !bs5.text.includes(`#${igItem.id} `)
+            && bs5.text.includes(`待人工确认清单：${pendingExpect.conflicts.length - 1} 条矛盾记录`)
+          : !bs5.present),
         `勾选 ${ticked}，保存 ${savedFix}，横幅 ${bs5.present ? bs5.text.slice(0, 80) : '未显示'}`);
     }
 
     // 全部忽略 → 横幅收起；刷新后仍不显示；随后清理本地忽略清单，不影响后续阶段
     const expectLeft = (() => {
-      // 修复后的剩余期望：若上一步完成了修复，矛盾数已减 1
-      const fixedApplied = Boolean(igItem && bs5 && bs5.present && !bs5.text.includes(`#${igItem.id} `));
-      return (fixedApplied ? pendingExpect.conflicts.length - 1 : pendingExpect.conflicts.length)
+      // 走过修复分支则矛盾数已减 1（不再依赖横幅回读推断，剩余为 0 时横幅本来就消失）
+      return (igItem ? pendingExpect.conflicts.length - 1 : pendingExpect.conflicts.length)
         + pendingExpect.suggestions.length;
     })();
     if (expectLeft > 0) {
@@ -757,7 +767,7 @@ function apiPayload(name, buf) {
         ownOrder.own >= 0 && ownOrder.own < ownOrder.esize && ownOrder.esize < ownOrder.paper,
         `分区标签序 ${JSON.stringify(ownOrder.labels)}`);
 
-      // 需求 2：状态及评价顺序 + 「计划」新枚举选项
+      // 需求 2：状态及评价（v6.5 起全站隐藏「推荐」「计划」，分区只剩「做过」）
       const statusInfo = await page.evaluate(() => {
         const section = document.querySelectorAll('.iw-form-section')[2];
         const labels = Array.from(section.querySelectorAll('.iw-label')).map((el) => el.textContent || '');
@@ -766,13 +776,9 @@ function apiPayload(name, buf) {
         const options = planSelect ? Array.from(planSelect.options).map((o) => o.value) : [];
         return { labels, done: i('做过'), rec: i('推荐'), plan: i('计划'), options };
       });
-      record('v6.1-2 「状态及评价」分区顺序：做过 → 推荐 → 计划',
-        statusInfo.done >= 0 && statusInfo.done < statusInfo.rec && statusInfo.rec < statusInfo.plan,
-        `分区标签序 ${JSON.stringify(statusInfo.labels)}`);
-      record('v6.1-3 「计划」下拉选项为新枚举（在计划中/不想做/不是现在/未标记），旧选项消失',
-        ['在计划中', '不想做', '不是现在', '未标记'].every((v) => statusInfo.options.includes(v))
-          && !statusInfo.options.includes('想做') && !statusInfo.options.includes('不确定'),
-        `选项 ${statusInfo.options.join('/')}`);
+      record('v6.5-1a 「状态及评价」分区只有「做过」，不再渲染「推荐」「计划」',
+        statusInfo.done >= 0 && statusInfo.rec < 0 && statusInfo.plan < 0 && statusInfo.options.length === 0,
+        `分区标签序 ${JSON.stringify(statusInfo.labels)}，#fld-计划=${statusInfo.options.length === 0 ? '不存在' : '仍存在'}`);
 
       // 需求 3：电子版尺码快捷标签双轨 + 联动保留
       const esizeGroups = await page.evaluate(() => {
@@ -841,14 +847,19 @@ function apiPayload(name, buf) {
         record('v6.4-7 详情页不再展示「推荐」「计划」字段',
           !detKeys.includes('推荐') && !detKeys.includes('计划'), `详情键：${detKeys.join('、')}`);
         await goto(`#/editor/${esizeRec.id}`);
-        const planSel = await page.evaluate(() => {
-          const sel = document.querySelector('#fld-计划');
-          return sel ? sel.value : null;
+        const editorNoRecPlan = await page.evaluate(() => {
+          const labels = Array.from(document.querySelectorAll('.iw-label')).map((el) => (el.textContent || '').trim());
+          return {
+            planSel: !!document.querySelector('#fld-计划'),
+            recSel: !!document.querySelector('#fld-推荐'),
+            hasRec: labels.includes('推荐'),
+            hasPlan: labels.includes('计划'),
+          };
         });
-        const editorBody = await bodyText();
-        record('v6.4-7 编辑表单保留「推荐」「计划」字段且取值与数据一致',
-          planSel !== null && planSel === String(esizeRec['计划'] ?? '') && editorBody.includes('推荐'),
-          `#fld-计划=${planSel}，数据=${esizeRec['计划']}，表单含「推荐」=${editorBody.includes('推荐')}`);
+        record('v6.5-1b 编辑表单不再渲染「推荐」「计划」字段（v6.4 的保留口径随 v6.5 撤销，数据不动）',
+          !editorNoRecPlan.planSel && !editorNoRecPlan.recSel && !editorNoRecPlan.hasRec && !editorNoRecPlan.hasPlan,
+          `#fld-推荐=${editorNoRecPlan.recSel}，#fld-计划=${editorNoRecPlan.planSel}，`
+            + `标签含推荐=${editorNoRecPlan.hasRec}，标签含计划=${editorNoRecPlan.hasPlan}`);
       } else {
         record('v6.1-8 详情页展示电子版尺码双轨标签', false, '当前数据中未找到含电子版尺码标签的记录');
       }
@@ -973,6 +984,170 @@ function apiPayload(name, buf) {
       `表头 ${JSON.stringify(sortInfo.heads.slice(0, 3))}，首行=${sortInfo.firstRow.slice(0, 3).join(' | ')}，`
         + `拼音序第一条=${expectedFirst ? expectedFirst['名称'] : '?'}，hash=${sortInfo.hash}`);
 
+
+
+    /* ---------------- v6.5 九项修改（浏览器逐项验证 · 阶段 A 完整数据） ---------------- */
+    await goto('#/list');
+    const typeSearch65 = async (text) => {
+      const h = await page.evaluateHandle(() => document.querySelector('input[placeholder*="编号"]'));
+      await h.focus();
+      await page.keyboard.down('Control');
+      await page.keyboard.press('KeyA');
+      await page.keyboard.up('Control');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type(text, { delay: 40 });
+    };
+    const cellByCol65 = async (recId, colName) => {
+      await typeSearch65(`#${recId}`);
+      await new Promise((r) => setTimeout(r, 700));
+      return page.evaluate((cn) => {
+        const heads = Array.from(document.querySelectorAll('.iw-table thead th')).map((h) => (h.textContent || '').trim());
+        const idx = heads.findIndex((h) => h === cn);
+        if (idx < 0) return { found: false, text: `no-col:${cn}` };
+        const tr = document.querySelector('.iw-table tbody tr');
+        const tds = tr ? Array.from(tr.querySelectorAll('td')) : [];
+        return { found: true, text: tds[idx] ? (tds[idx].textContent || '').trim() : 'no-cell' };
+      }, colName);
+    };
+    const rowClass65 = async (recId) => {
+      await typeSearch65(`#${recId}`);
+      await new Promise((r) => setTimeout(r, 700));
+      return page.evaluate(() => {
+        const tr = document.querySelector('.iw-table tbody tr');
+        return tr ? (tr.className || '') : '(no-row)';
+      });
+    };
+
+    // 需求 1 + 9：表头「电子」「纸质」两列拆分；「形态 / 推荐 / 计划」消失
+    const headTexts65 = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-table thead th'))
+      .map((h) => (h.textContent || '').trim()));
+    record('v6.5-1/9 列表表头含「电子」「纸质」两列，且无「形态/推荐/计划」',
+      headTexts65.includes('电子') && headTexts65.includes('纸质')
+        && !headTexts65.includes('形态') && !headTexts65.includes('推荐') && !headTexts65.includes('计划'),
+      `表头：${headTexts65.join('、')}`);
+
+    const onlyE65 = allFile.records.find((r) => (r['拥有形态'] || []).includes('电子版') && !(r['拥有形态'] || []).includes('纸质版'));
+    const onlyP65 = allFile.records.find((r) => (r['拥有形态'] || []).includes('纸质版') && !(r['拥有形态'] || []).includes('电子版'));
+    if (onlyE65 && onlyP65) {
+      const e1 = await cellByCol65(onlyE65.id, '电子');
+      const p1 = await cellByCol65(onlyE65.id, '纸质');
+      const e2 = await cellByCol65(onlyP65.id, '电子');
+      const p2 = await cellByCol65(onlyP65.id, '纸质');
+      record('v6.5-9 「电子」「纸质」列按勾选分别显示 ✓ / ×',
+        e1.text === '✓' && p1.text === '×' && e2.text === '×' && p2.text === '✓',
+        `#${onlyE65.id} 电子=${e1.text}/纸质=${p1.text}；#${onlyP65.id} 电子=${e2.text}/纸质=${p2.text}`);
+    } else {
+      record('v6.5-9 「电子」「纸质」列口径样本齐全', false, '当前数据缺少「仅电子版 / 仅纸质版」样本对');
+    }
+
+    // 需求 8：行标注色 —— 信息不全 → 浅灰；齐全但无形态 → 浅黄（灰优先，不叠加）
+    const incompleteRec65 = allFile.records.find((r) => String(r['名称'] || '').trim()
+      && (!(Array.isArray(r['分类']) ? r['分类'] : []).filter((v) => String(v ?? '').trim()).length
+        || !String(r['款式'] ?? '').trim() || !String(r['季节'] ?? '').trim()));
+    const noformatRec65 = allFile.records.find((r) => String(r['名称'] || '').trim()
+      && (Array.isArray(r['分类']) ? r['分类'] : []).some((v) => String(v ?? '').trim())
+      && String(r['款式'] ?? '').trim() && String(r['季节'] ?? '').trim()
+      && !(r['拥有形态'] || []).length);
+    if (incompleteRec65 && noformatRec65) {
+      const clsInc = await rowClass65(incompleteRec65.id);
+      const clsFmt = await rowClass65(noformatRec65.id);
+      record('v6.5-8 行标注色：信息不全 → 浅灰（iw-row-incomplete），齐全但无形态 → 浅黄（iw-row-noformat）',
+        clsInc.includes('iw-row-incomplete') && !clsInc.includes('iw-row-noformat')
+          && clsFmt.includes('iw-row-noformat') && !clsFmt.includes('iw-row-incomplete'),
+        `#${incompleteRec65.id}=${clsInc || '(无class)'}；#${noformatRec65.id}=${clsFmt || '(无class)'}`);
+    } else {
+      record('v6.5-8 行标注色口径样本齐全', false,
+        `信息不全样本=${!!incompleteRec65}，齐全但无形态样本=${!!noformatRec65}`);
+    }
+
+    // 需求 6：搜索子串匹配（回归：搜「89」命中「896文艺套装-上衣」）
+    const rec896 = allFile.records.find((r) => String(r['名称'] || '').includes('896文艺套装-上衣'));
+    if (rec896) {
+      await typeSearch65('89');
+      const hit89 = await waitFor(async () => page.evaluate((n) => Array.from(document.querySelectorAll('.iw-table tbody tr'))
+        .some((tr) => (tr.textContent || '').includes(n)), String(rec896['名称'])), 8000);
+      record('v6.5-6 搜索「89」命中「896文艺套装-上衣」（子串匹配修复回归）', hit89,
+        `目标 #${rec896.id}「${rec896['名称']}」${hit89 ? '已命中' : '未命中'}`);
+    } else {
+      const anyNamed65 = allFile.records.find((r) => String(r['名称'] || '').length >= 4);
+      const sub65 = anyNamed65 ? String(anyNamed65['名称']).slice(1, 3) : '';
+      await typeSearch65(sub65);
+      const hitSub = await waitFor(async () => page.evaluate((n) => Array.from(document.querySelectorAll('.iw-table tbody tr'))
+        .some((tr) => (tr.textContent || '').includes(n)), anyNamed65 ? String(anyNamed65['名称']) : ''), 8000);
+      record(`v6.5-6 搜索按子串命中（数据无 896 样本，用「${sub65}」兜底）`, hitSub,
+        anyNamed65 ? `子串「${sub65}」${hitSub ? '命中' : '未命中'}「${anyNamed65['名称']}」` : '无长名称样本');
+    }
+
+    // 需求 7：搜索框「×」清空 → 输入清空、恢复完整列表、按钮随之消失
+    const clearBtnBefore65 = await page.evaluate(() => !!document.querySelector('[data-testid="iw-search-clear"]'));
+    await page.click('[data-testid="iw-search-clear"]');
+    await new Promise((r) => setTimeout(r, 700));
+    const afterClear65 = await page.evaluate(() => ({
+      val: ((document.querySelector('input[placeholder*="编号"]') || { value: '?' }).value) || '',
+      rows: document.querySelectorAll('.iw-table tbody tr').length,
+      btn: !!document.querySelector('[data-testid="iw-search-clear"]'),
+    }));
+    record('v6.5-7 搜索框「×」清空：清空输入、恢复完整列表、按钮消失',
+      clearBtnBefore65 && afterClear65.val === ''
+        && afterClear65.rows === Math.min(allFile.records.length, 50) && !afterClear65.btn,
+      `清空前按钮=${clearBtnBefore65}，清空后输入=「${afterClear65.val}」，`
+        + `行数=${afterClear65.rows}（期望 ${Math.min(allFile.records.length, 50)}），按钮残留=${afterClear65.btn}`);
+
+    // 需求 4 + 5：筛选面板「尺码」（OR 口径）与「拥有形态：均没有」
+    await clickByText('筛选条件');
+    await new Promise((r) => setTimeout(r, 500));
+    const panelTitles65 = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-filter-block-title'))
+      .map((el) => (el.textContent || '').trim()));
+    const panelLabels65 = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-filter-panel button'))
+      .map((b) => b.getAttribute('aria-label') || (b.textContent || '').trim()));
+    record('v6.5-4/5 筛选面板：标题为「尺码」（非「电子版尺码」），拥有形态含「均没有」',
+      panelTitles65.includes('尺码') && !panelTitles65.includes('电子版尺码')
+        && panelLabels65.some((l) => l.includes('拥有形态：均没有')),
+      `标题：${panelTitles65.join('、')}`);
+
+    const sizeRec65 = allFile.records.find((r) => (r['电子版尺码'] || []).length || (r['纸质版尺码'] || []).length);
+    if (sizeRec65) {
+      const esz65 = sizeRec65['电子版尺码'] || [];
+      const psz65 = sizeRec65['纸质版尺码'] || [];
+      const tag65 = (esz65.length ? esz65 : psz65)[0];
+      const expectedSize65 = allFile.records.filter((r) => (r['电子版尺码'] || []).includes(tag65)
+        || (r['纸质版尺码'] || []).includes(tag65)).length;
+      await page.evaluate((lbl) => {
+        const btn = Array.from(document.querySelectorAll('.iw-filter-panel button'))
+          .find((b) => (b.getAttribute('aria-label') || '') === lbl);
+        if (btn) btn.click();
+      }, `尺码：${tag65}`);
+      await new Promise((r) => setTimeout(r, 900));
+      const sizeRows65 = await page.evaluate(() => document.querySelectorAll('.iw-table tbody tr').length);
+      record('v6.5-4 「尺码」筛选 OR 口径：命中电子版尺码或纸质版尺码任一含该尺码的记录',
+        expectedSize65 > 0 && sizeRows65 === Math.min(expectedSize65, 50),
+        `尺码「${tag65}」：命中 ${sizeRows65} 行，数据推导期望 ${expectedSize65}`);
+      // 再点一次取消，避免影响后续「均没有」口径
+      await page.evaluate((lbl) => {
+        const btn = Array.from(document.querySelectorAll('.iw-filter-panel button'))
+          .find((b) => (b.getAttribute('aria-label') || '') === lbl);
+        if (btn) btn.click();
+      }, `尺码：${tag65}`);
+      await new Promise((r) => setTimeout(r, 700));
+      // 需求 5：均没有 —— 筛出两种形态都未勾选的记录
+      await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('.iw-filter-panel button'))
+          .find((b) => (b.getAttribute('aria-label') || '') === '拥有形态：均没有');
+        if (btn) btn.click();
+      });
+      await new Promise((r) => setTimeout(r, 900));
+      const noneRows65 = await page.evaluate(() => document.querySelectorAll('.iw-table tbody tr').length);
+      const expectedNone65 = allFile.records.filter((r) => !(r['拥有形态'] || []).length).length;
+      record('v6.5-5 「拥有形态：均没有」筛出两种形态都未勾选的记录',
+        expectedNone65 > 0 && noneRows65 === Math.min(expectedNone65, 50),
+        `命中 ${noneRows65} 行，数据推导期望 ${expectedNone65}`);
+    } else {
+      record('v6.5-4/5 尺码/形态筛选样本齐全', false, '当前数据没有可用的尺码样本');
+    }
+    // 清掉筛选，恢复干净状态供后续断言使用
+    await clickByText('清空条件');
+    await new Promise((r) => setTimeout(r, 700));
+    await goto('#/list');
 
     /* 6b. 操作日志：连续触发 5 次导出，只保留最近 3 条 */
     await goto('/settings');
@@ -1179,8 +1354,9 @@ function apiPayload(name, buf) {
         const putBeforePlans = putCount;
         await clickByText('同步到 GitHub', '.iw-main');
         await waitFor(async () => putCount > putBeforePlans, 12000);
+        const syncTextPlans = await page.evaluate(() => document.body.innerText.slice(0, 2000));
         let plansPutOk = false;
-        let plansPutMsg = '未捕获 plans.json PUT';
+        let plansPutMsg = `未捕获 plans.json PUT；api尾部=[${apiHits.slice(-8).join(' | ')}]；同步状态=「${(syncTextPlans.match(/(同步|拉取|备份)[^\n]{0,80}/) || [''])[0]}」`;
         for (let i = 0; i < putUrls.length; i += 1) {
           if (!putUrls[i].includes('plans.json')) continue;
           try {
@@ -1438,8 +1614,9 @@ function apiPayload(name, buf) {
     const putBeforeOptions = putCount;
     await clickByText('同步到 GitHub', '.iw-main');
     await waitFor(async () => putCount > putBeforeOptions, 12000);
+    const syncTextOptions = await page.evaluate(() => document.body.innerText.slice(0, 2000));
     let optionsPutOk = false;
-    let optionsPutMsg = '未捕获 options.json PUT';
+    let optionsPutMsg = `未捕获 options.json PUT；api尾部=[${apiHits.slice(-8).join(' | ')}]；同步状态=「${(syncTextOptions.match(/(同步|拉取|备份)[^\n]{0,80}/) || [''])[0]}」`;
     for (let i = 0; i < putUrls.length; i += 1) {
       if (!putUrls[i].includes('options.json')) continue;
       try {
@@ -1453,6 +1630,135 @@ function apiPayload(name, buf) {
       } catch (e) { /* skip */ }
     }
     record('v6.3-6 字段选项随同步写回数据仓（PUT options.json）', optionsPutOk, optionsPutMsg);
+    /* ---------------- v6.5 需求 2/3：设置页直接新增/删除 品牌·款式·尺码 选项 ---------------- */
+    const NEW_BRAND65 = '冒烟v650品牌';
+    const NEW_SIZE65 = '202';
+    await goto('#/settings');
+    await navTo('options');
+    await new Promise((r) => setTimeout(r, 600));
+    const addInputs65 = await page.evaluate(() => ({
+      brand: !!document.querySelector('[data-testid="iw-option-add-input-品牌"]'),
+      style: !!document.querySelector('[data-testid="iw-option-add-input-款式"]'),
+      esize: !!document.querySelector('[data-testid="iw-option-add-input-电子版尺码"]'),
+      psize: !!document.querySelector('[data-testid="iw-option-add-input-纸质版尺码"]'),
+    }));
+    record('v6.5-2/3 设置页「字段选项管理」提供品牌/款式/尺码的新增入口',
+      addInputs65.brand && addInputs65.style && addInputs65.esize && addInputs65.psize,
+      `品牌=${addInputs65.brand} 款式=${addInputs65.style} 电子版尺码=${addInputs65.esize} 纸质版尺码=${addInputs65.psize}`);
+
+    const addOption65 = async (fieldKey, value) => {
+      const ok = await page.evaluate((k) => {
+        const el = document.querySelector(`[data-testid="iw-option-add-input-${k}"]`);
+        if (!el) return false;
+        el.focus();
+        return true;
+      }, fieldKey);
+      if (!ok) return false;
+      await page.keyboard.type(value, { delay: 30 });
+      await page.evaluate((k) => {
+        const btn = document.querySelector(`[data-testid="iw-option-add-${k}"]`);
+        if (btn) btn.click();
+      }, fieldKey);
+      await new Promise((r) => setTimeout(r, 500));
+      return true;
+    };
+    const deleteOption65 = async (value) => {
+      await page.evaluate((val) => {
+        const btn = Array.from(document.querySelectorAll('[data-testid="iw-options-admin"] button'))
+          .find((b) => (b.getAttribute('aria-label') || '') === `删除选项：${val}`);
+        if (btn) btn.click();
+      }, value);
+      await new Promise((r) => setTimeout(r, 400));
+      await page.evaluate(() => {
+        const dlg = document.querySelector('[role="dialog"]');
+        if (!dlg) return;
+        const btn = Array.from(dlg.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '删除');
+        if (btn) btn.click();
+      });
+      await new Promise((r) => setTimeout(r, 500));
+    };
+
+    if (addInputs65.brand) {
+      const brandAdded65 = await addOption65('品牌', NEW_BRAND65);
+      await goto('#/list');
+      await clickByText('筛选条件');
+      await new Promise((r) => setTimeout(r, 500));
+      const brandChips65 = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-filter-panel button'))
+        .map((b) => b.getAttribute('aria-label') || ''));
+      const hasBrand65 = brandChips65.some((l) => l === `品牌：${NEW_BRAND65}`);
+      record('v6.5-2 设置页新增品牌选项即时同步到筛选面板候选',
+        brandAdded65 && hasBrand65, `筛选候选含「${NEW_BRAND65}」=${hasBrand65}`);
+
+      await goto('#/editor/new');
+      await new Promise((r) => setTimeout(r, 600));
+      const brandSelect65 = await page.evaluate(() => {
+        const sel = document.querySelector('select[aria-label="品牌"]');
+        return sel ? Array.from(sel.options).map((o) => o.value) : [];
+      });
+      record('v6.5-2 设置页新增品牌选项同步到新增/编辑表单下拉',
+        brandSelect65.includes(NEW_BRAND65),
+        `候选共 ${brandSelect65.length} 项，含「${NEW_BRAND65}」=${brandSelect65.includes(NEW_BRAND65)}`);
+
+      await goto('#/settings');
+      await navTo('options');
+      await new Promise((r) => setTimeout(r, 500));
+      await deleteOption65(NEW_BRAND65);
+      await goto('#/list');
+      await clickByText('筛选条件');
+      await new Promise((r) => setTimeout(r, 500));
+      const brandChipsAfter65 = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-filter-panel button'))
+        .map((b) => b.getAttribute('aria-label') || ''));
+      record('v6.5-2 设置页删除品牌选项即时同步（筛选面板候选移除）',
+        !brandChipsAfter65.some((l) => l === `品牌：${NEW_BRAND65}`),
+        `筛选候选含「${NEW_BRAND65}」=${brandChipsAfter65.some((l) => l === `品牌：${NEW_BRAND65}`)}`);
+    } else {
+      record('v6.5-2 设置页品牌新增入口', false, '未找到品牌新增输入框');
+    }
+
+    if (addInputs65.esize) {
+      // 品牌块结束时停留在列表页——先回到「设置 › 字段选项」再新增尺码选项
+      await goto('#/settings');
+      await navTo('options');
+      await new Promise((r) => setTimeout(r, 600));
+      const sizeAdded65 = await addOption65('电子版尺码', NEW_SIZE65);
+      await goto('#/list');
+      await clickByText('筛选条件');
+      await new Promise((r) => setTimeout(r, 500));
+      const sizeChips65 = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-filter-panel button'))
+        .map((b) => b.getAttribute('aria-label') || ''));
+      const hasSize65 = sizeChips65.some((l) => l === `尺码：${NEW_SIZE65}`);
+      record('v6.5-3 设置页新增尺码选项即时同步到筛选面板「尺码」候选',
+        sizeAdded65 && hasSize65, `尺码候选含「${NEW_SIZE65}」=${hasSize65}`);
+
+      // 表单快捷标签同步：需打开「拥有电子版」的记录（未勾选形态时尺码输入不渲染）
+      const esizeOwner65 = allFile.records.find((r) => (r['拥有形态'] || []).includes('电子版'));
+      if (esizeOwner65) {
+        await goto(`#/editor/${esizeOwner65.id}`);
+        await new Promise((r) => setTimeout(r, 700));
+        const quickLabels65 = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-quick-tags button'))
+          .map((b) => b.getAttribute('aria-label') || ''));
+        const quickHas65 = quickLabels65.some((l) => l.includes(NEW_SIZE65));
+        record('v6.5-3 设置页新增尺码选项同步到表单快捷标签',
+          quickHas65, `#${esizeOwner65.id} 快捷标签含「${NEW_SIZE65}」=${quickHas65}`);
+      }
+
+      await goto('#/settings');
+      await navTo('options');
+      await new Promise((r) => setTimeout(r, 500));
+      await deleteOption65(NEW_SIZE65);
+      await goto('#/list');
+      await clickByText('筛选条件');
+      await new Promise((r) => setTimeout(r, 500));
+      const sizeChipsAfter65 = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-filter-panel button'))
+        .map((b) => b.getAttribute('aria-label') || ''));
+      record('v6.5-3 设置页删除尺码选项即时同步（筛选面板候选移除）',
+        !sizeChipsAfter65.some((l) => l === `尺码：${NEW_SIZE65}`),
+        `尺码候选含「${NEW_SIZE65}」=${sizeChipsAfter65.some((l) => l === `尺码：${NEW_SIZE65}`)}`);
+    } else {
+      record('v6.5-3 设置页尺码新增入口', false, '未找到电子版尺码新增输入框');
+    }
+
+
 
     /* ---------------- 阶段 B：第 1 条修复后的写回校验行为 ---------------- */
     const v4File = JSON.parse(recordsBuf.toString('utf8'));
@@ -1601,30 +1907,36 @@ function apiPayload(name, buf) {
     const staleAKeys = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-kv-key'))
       .map((n) => (n.textContent || '').trim()));
     await goto(`#/editor/${staleA.id}`);
-    const staleAPlan = await page.evaluate(() => {
-      const sel = document.querySelector('#fld-计划');
-      return sel ? sel.value : null;
-    });
+    const staleAPlan = await page.evaluate((rid) => {
+      try {
+        const j = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+        const r = (j.records || []).find((x) => x.id === rid);
+        return r ? String(r['计划'] ?? '') : null;
+      } catch (e) { return null; }
+    }, staleA.id);
     record('v6.1-C 「想做：想做」加载时归一为「计划：在计划中」，「女士全码」映射为字母码全码',
       staleAPlan === '在计划中'
         && staleAKeys.includes('电子版尺码')
         && staleADetail.includes('XS') && staleADetail.includes('2XL') && staleADetail.includes('4XL'),
-      `#${staleA.id} keys=${staleAKeys.join('、')}；#fld-计划=${staleAPlan}；详情片段=${staleADetail.replace(/\s+/g, ' ').slice(0, 160)}`);
+      `#${staleA.id} keys=${staleAKeys.join('、')}；计划(缓存)=${staleAPlan}；详情片段=${staleADetail.replace(/\s+/g, ' ').slice(0, 160)}`);
 
     await goto(`#/detail/${staleB.id}`);
     const staleBDetail = await bodyText();
     const staleBKeys = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-kv-key'))
       .map((n) => (n.textContent || '').trim()));
     await goto(`#/editor/${staleB.id}`);
-    const staleBPlan = await page.evaluate(() => {
-      const sel = document.querySelector('#fld-计划');
-      return sel ? sel.value : null;
-    });
+    const staleBPlan = await page.evaluate((rid) => {
+      try {
+        const j = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+        const r = (j.records || []).find((x) => x.id === rid);
+        return r ? String(r['计划'] ?? '') : null;
+      } catch (e) { return null; }
+    }, staleB.id);
     record('v6.1-C 字符串尺码拆开映射（大小童全码→身高码；男士全码丢弃），「不确定」归一为「不是现在」',
       staleBPlan === '不是现在'
         && staleBKeys.includes('电子版尺码')
         && staleBDetail.includes('110') && staleBDetail.includes('170') && staleBDetail.includes('180'),
-      `#${staleB.id} keys=${staleBKeys.join('、')}；#fld-计划=${staleBPlan}；详情片段=${staleBDetail.replace(/\s+/g, ' ').slice(0, 160)}`);
+      `#${staleB.id} keys=${staleBKeys.join('、')}；计划(缓存)=${staleBPlan}；详情片段=${staleBDetail.replace(/\s+/g, ' ').slice(0, 160)}`);
     record('v6.1-C 兜底归一只发生在内存，未触发写回（PUT 不增加）', putCount === putBeforeC,
       `PUT 次数 ${putCount - putBeforeC}`);
 
