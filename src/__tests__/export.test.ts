@@ -148,7 +148,6 @@ describe('Excel 导出', () => {
       season: [],
       seasonBlank: 1,
       ownership: [{ name: '仅电子', value: 1 }],
-      completion: [{ name: '做过', value: 1 }],
     });
     const buf = buildXlsxBuffer(records, DEFAULT_SCHEMA, statsRows);
     const wb = XLSX.read(buf, { type: 'array' });
@@ -175,7 +174,6 @@ describe('Excel 导出', () => {
         { name: '仅纸质', value: 2 },
         { name: '双有', value: 37 },
       ],
-      completion: [],
     });
     expect(rows.map((r) => r['项目'])).toEqual(['皆无', '仅电子', '仅纸质', '双有']);
     expect(rows[0]['维度']).toBe('拥有形态');
@@ -192,7 +190,6 @@ describe('Excel 导出', () => {
       season: [],
       seasonBlank: 1,
       ownership: [],
-      completion: [],
     });
     expect(rows.find((r) => r['项目'] === '其他')?.['数量']).toBe('2');
     expect(rows.find((r) => r['项目'] === '未分类')?.['数量']).toBe('1');

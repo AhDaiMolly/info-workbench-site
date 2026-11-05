@@ -225,6 +225,16 @@ function apiPayload(name, buf) {
     await page.reload({ waitUntil: 'networkidle2' });
 
     const hasRows = () => page.evaluate(() => document.querySelectorAll('.iw-table tbody tr').length);
+    // v6.4：设置页二级导航 — 切换到指定设置分组（点击后等待重渲染）
+    const navTo = async (id) => {
+      const ok = await page.evaluate((tid) => {
+        const b = document.querySelector(`[data-testid="iw-settings-nav-${tid}"]`);
+        if (b) { b.click(); return true; }
+        return false;
+      }, id);
+      await new Promise((r) => setTimeout(r, 450));
+      return ok;
+    };
     if (!(await waitFor(async () => (await hasRows()) > 0, 8000))) {
       for (const candidate of ['同步', '拉取', '立即同步', '刷新数据', '连接', '去连接']) {
         await clickByText(candidate);
@@ -349,6 +359,7 @@ function apiPayload(name, buf) {
 
       // 设置页：查看已忽略项并「恢复」→ 重新出现在横幅
       await goto('/settings');
+      await navTo('data');
       const pcBlock = await page.evaluate(() => {
         const b = document.querySelector('[data-testid="iw-pending-checks-block"]');
         return b ? { present: true, text: (b.innerText || '').replace(/\s+/g, ' ') } : { present: false, text: '' };
@@ -466,10 +477,11 @@ function apiPayload(name, buf) {
     /* 3. 新增表单：五分区 + 下拉单选 */
     await goto('/editor/new');
     const formText = await bodyText();
-    const sectionTitles = ['基础信息', '拥有形态', '状态及评价', '备注', '系统信息'];
+    const sectionTitles = ['基础信息', '拥有形态', '状态及评价', '备注'];
     const missingSections = sectionTitles.filter((t) => !formText.includes(t));
-    record('新增表单渲染五个分区', missingSections.length === 0,
-      missingSections.length ? `缺少：${missingSections.join('、')}` : sectionTitles.join(' / '));
+    record('新增表单渲染四个分区（v6.4 系统信息已隐藏）',
+      missingSections.length === 0 && !formText.includes('系统信息'),
+      missingSections.length ? `缺少：${missingSections.join('、')}` : `${sectionTitles.join(' / ')}；系统信息未出现`);
 
     const selectInfo = await page.evaluate(() => {
       const get = (id) => {
@@ -515,8 +527,9 @@ function apiPayload(name, buf) {
       return { titles, text: document.body.innerText };
     });
     const detailMissing = sectionTitles.filter((t) => !detailInfo.titles.some((x) => x.includes(t)));
-    record('详情页渲染五个分区', detailMissing.length === 0,
-      detailMissing.length ? `缺少：${detailMissing.join('、')}` : detailInfo.titles.join(' / '));
+    record('详情页渲染四个分区（v6.4 系统信息/记录编号已隐藏）',
+      detailMissing.length === 0 && !detailInfo.titles.some((x) => x.includes('系统信息')) && !detailInfo.text.includes('记录 #'),
+      detailMissing.length ? `缺少：${detailMissing.join('、')}` : `${detailInfo.titles.join(' / ')}；无系统信息区、无记录编号`);
     const rec22 = allFile.records.find((r) => r.id === 22);
     const style22 = await page.evaluate(() => {
       const row = Array.from(document.querySelectorAll('.iw-kv')).find((n) => {
@@ -563,6 +576,10 @@ function apiPayload(name, buf) {
       !dashChartTitles.includes('完成与计划') && !dashText.includes('完成与计划'),
       dashChartTitles.length ? `图表卡片 ${dashCardCount} 个：${dashChartTitles.join('、')}` : '未取到图表标题');
 
+    // v6.4 需求 1：看板不再有任何「计划」语义的展示（KPI / 图表 / 文案）
+    record('v6.4-1 看板无「计划」相关展示', !dashText.includes('计划'),
+      kpiLabels.length ? `KPI：${kpiLabels.join('、')}` : '未取到 KPI');
+
     /* 6. 设置页（v4 第 5 / 6 条 + 导出入口 + 数据体检） */
     await goto('/settings');
     const settingsText = await bodyText();
@@ -570,18 +587,41 @@ function apiPayload(name, buf) {
       settingsText.includes('安全须知') ? '仍存在「安全须知」' : '未出现');
     record('v4 设置页有「同步和备份」区', settingsText.includes('同步和备份'), '包含「同步和备份」');
     record('v4 设置页有「操作日志（最近 3 条）」区', settingsText.includes('操作日志（最近 3 条）'), '包含操作日志区');
+    record('v4 设置页无「回收站」入口', !settingsText.includes('回收站'), '未出现');
+
+    // v6.4 需求 2：设置页二级导航 —— 分组按钮齐全、各分组可切换
+    const navLabels = await page.evaluate(() => Array.from(document.querySelectorAll('[data-testid^="iw-settings-nav-"]'))
+      .map((b) => (b.textContent || '').trim()));
+    record('v6.4-2 设置页二级导航按钮齐全（连接与同步/数据管理/计划清单/字段选项/版本信息）',
+      navLabels.join(',') === '连接与同步,数据管理,计划清单,字段选项,版本信息', navLabels.join('、'));
+    const navDataOk = await navTo('data');
+    const dataText = await bodyText();
+    record('v6.4-2 切到「数据管理」组：数据体检与导出入口可达',
+      navDataOk && dataText.includes('数据体检') && dataText.includes('导出全部 Excel') && dataText.includes('导出全部 JSON'),
+      dataText.includes('数据体检') ? '数据体检与导出入口均在' : dataText.slice(0, 60));
     record('v4 设置页有「数据管理」区与导出入口',
-      settingsText.includes('数据管理')
+      dataText.includes('数据管理')
       && (await clickByText('导出全部 Excel', '.iw-main')) !== null
       && (await clickByText('导出全部 JSON', '.iw-main')) !== null,
       '含「导出全部 Excel」「导出全部 JSON」');
-    record('v4 设置页无「回收站」入口', !settingsText.includes('回收站'), '未出现');
+    const probeGroup = async (id, sel) => {
+      const ok = await navTo(id);
+      const n = ok ? await page.evaluate((s2) => document.querySelectorAll(s2).length, sel) : 0;
+      return { ok, n };
+    };
+    const pPlans = await probeGroup('plans', '[data-testid="iw-new-plan-name"]');
+    const pOptions = await probeGroup('options', '[data-testid="iw-options-admin"]');
+    const pVersion = await probeGroup('version', '[data-testid="iw-version-info"]');
+    const pConn = await probeGroup('connection', '.iw-settings-title');
+    record('v6.4-2 其余分组均可切换（计划清单/字段选项/版本信息/连接与同步）',
+      pPlans.ok && pPlans.n > 0 && pOptions.ok && pOptions.n > 0 && pVersion.ok && pVersion.n > 0 && pConn.ok && pConn.n > 0,
+      `plans=${pPlans.n} options=${pOptions.n} version=${pVersion.n} connection=${pConn.n}`);
     const shellIdsNow = allFile.records.filter((r) => !String(r.名称 ?? '').trim()).map((r) => `#${r.id}`);
     record('v4 设置页「数据体检」与当前数据一致（空壳记录编号）',
-      settingsText.includes('数据体检')
+      dataText.includes('数据体检')
         && (shellIdsNow.length
-          ? shellIdsNow.every((id) => settingsText.includes(id))
-          : settingsText.includes('没有发现「名称为空」的导入遗留记录')),
+          ? shellIdsNow.every((id) => dataText.includes(id))
+          : dataText.includes('没有发现「名称为空」的导入遗留记录')),
       shellIdsNow.length
         ? `当前数据 ${shellIdsNow.length} 条空壳记录：${shellIdsNow.join('、')}`
         : '当前数据无「名称为空」的空壳记录');
@@ -593,6 +633,7 @@ function apiPayload(name, buf) {
     });
 
     // 需求 1：设置页底部版本信息（构建时注入 version / 构建日期 / 提交）
+    await navTo('version');
     const verInfo = await page.evaluate(() => {
       const card = document.querySelector('[data-testid="iw-version-info"]');
       const text = document.querySelector('[data-testid="iw-version-text"]');
@@ -794,11 +835,40 @@ function apiPayload(name, buf) {
         record('v6.1-8 详情页展示电子版尺码双轨标签（迁移后标签原样展示）',
           detText.includes('电子版尺码') && detText.includes(esTags.join('、')),
           `#${esizeRec.id} 标签 ${esTags.length} 个（${esTags[0]}…${esTags[esTags.length - 1]}）`);
-        record('v6.1-9 详情页展示「计划」字段取值',
-          detText.includes('计划') && (!esizeRec['计划'] || detText.includes(esizeRec['计划'])),
-          `计划=${esizeRec['计划']}`);
+        // v6.4 需求 7：详情页不再展示「推荐」「计划」字段；取值改到编辑表单核对（编辑表单保留这两个字段）
+        const detKeys = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-kv-key'))
+          .map((n) => (n.textContent || '').trim()));
+        record('v6.4-7 详情页不再展示「推荐」「计划」字段',
+          !detKeys.includes('推荐') && !detKeys.includes('计划'), `详情键：${detKeys.join('、')}`);
+        await goto(`#/editor/${esizeRec.id}`);
+        const planSel = await page.evaluate(() => {
+          const sel = document.querySelector('#fld-计划');
+          return sel ? sel.value : null;
+        });
+        const editorBody = await bodyText();
+        record('v6.4-7 编辑表单保留「推荐」「计划」字段且取值与数据一致',
+          planSel !== null && planSel === String(esizeRec['计划'] ?? '') && editorBody.includes('推荐'),
+          `#fld-计划=${planSel}，数据=${esizeRec['计划']}，表单含「推荐」=${editorBody.includes('推荐')}`);
       } else {
         record('v6.1-8 详情页展示电子版尺码双轨标签', false, '当前数据中未找到含电子版尺码标签的记录');
+      }
+
+      // v6.4 需求 4：条件尺码展示 —— 未拥有的形态，其尺码字段整个不渲染（详情页）
+      await goto(`#/detail/${target.id}`);
+      const targetKeys = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-kv-key'))
+        .map((n) => (n.textContent || '').trim()));
+      record('v6.4-4a 详情页：仅拥有电子版 → 无「纸质版尺码」行、有「电子版尺码」行',
+        !targetKeys.includes('纸质版尺码') && targetKeys.includes('电子版尺码'),
+        `#${target.id} 详情键：${targetKeys.join('、')}`);
+      const bothOwned = allFile.records.find((r) =>
+        (r['拥有形态'] || []).includes('纸质版') && (r['拥有形态'] || []).includes('电子版') && String(r['名称'] || '').trim());
+      if (bothOwned) {
+        await goto(`#/detail/${bothOwned.id}`);
+        const bothKeys = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-kv-key'))
+          .map((n) => (n.textContent || '').trim()));
+        record('v6.4-4b 详情页：两种形态都拥有 → 两个尺码行都展示',
+          bothKeys.includes('纸质版尺码') && bothKeys.includes('电子版尺码'),
+          `#${bothOwned.id} 详情键：${bothKeys.join('、')}`);
       }
 
       // 需求 5：编号搜索（「#编号」与纯数字）
@@ -841,6 +911,45 @@ function apiPayload(name, buf) {
       }, 10000);
       record('v6-5c 用纯数字编号搜索也能命中该记录', digitHit,
         digitHit ? `纯数字「${target.id}」命中「${target['名称']}」` : '未命中');
+
+      /* v6.4 需求 5/6：列表「教程」三态与「做过」两态（搜索定位行，锚定当前数据） */
+      const cellOf = async (recId, colName) => {
+        await typeSearch(`#${recId}`);
+        await new Promise((r) => setTimeout(r, 600));
+        return page.evaluate((cn) => {
+          const heads = Array.from(document.querySelectorAll('.iw-table thead th'))
+            .map((h) => (h.textContent || '').trim());
+          const idx = heads.findIndex((h) => h.startsWith(cn));
+          if (idx < 0) return { found: false, text: `no-col:${cn}` };
+          const row = document.querySelector('.iw-table tbody tr');
+          const cells = row ? Array.from(row.querySelectorAll('td')) : [];
+          return { found: true, text: cells[idx] ? (cells[idx].textContent || '').trim() : 'no-cell' };
+        }, colName);
+      };
+      const tutYes = allFile.records.find((r) => r['教程'] === '有');
+      const tutNo = allFile.records.find((r) => r['教程'] === '无');
+      const tutUnk = allFile.records.find((r) => !r['教程'] || r['教程'] === '未知');
+      const doneYes = allFile.records.find((r) => r['做过'] === true);
+      const doneNo = allFile.records.find((r) => r['做过'] === false && String(r['名称'] || '').trim());
+      if (tutYes && tutNo && tutUnk && doneYes && doneNo) {
+        const t1 = await cellOf(tutYes.id, '教程');
+        record('v6.4-5 列表「教程」列：有 → ✓', t1.found && t1.text === '✓', `#${tutYes.id} 单元格「${t1.text}」`);
+        const t2 = await cellOf(tutNo.id, '教程');
+        record('v6.4-5 列表「教程」列：无 → ✗', t2.found && t2.text === '✗', `#${tutNo.id} 单元格「${t2.text}」`);
+        const t3 = await cellOf(tutUnk.id, '教程');
+        record('v6.4-5 列表「教程」列：未填 → 留空', t3.found && t3.text === '', `#${tutUnk.id} 单元格「${t3.text}」`);
+        const d1 = await cellOf(doneYes.id, '做过');
+        record('v6.4-6 列表「做过」列：做过 → ✓', d1.found && d1.text === '✓', `#${doneYes.id} 单元格「${d1.text}」`);
+        const d2 = await cellOf(doneNo.id, '做过');
+        record('v6.4-6 列表「做过」列：未做 → 留空', d2.found && d2.text === '', `#${doneNo.id} 单元格「${d2.text}」`);
+        const headTexts = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-table thead th'))
+          .map((h) => (h.textContent || '').trim()));
+        record('v6.4-6 列表表头无「标记」列（已替换为「做过」）',
+          !headTexts.some((h) => h.startsWith('标记')) && headTexts.some((h) => h.startsWith('做过')),
+          `表头：${headTexts.join('、')}`);
+      } else {
+        record('v6.4-5/6 列表图标口径样本齐全', false, '当前数据缺少教程/做过口径样本');
+      }
     }
 
     // 需求 4：默认排序为名称拼音升序（清掉本地偏好后重进列表）
@@ -867,11 +976,13 @@ function apiPayload(name, buf) {
 
     /* 6b. 操作日志：连续触发 5 次导出，只保留最近 3 条 */
     await goto('/settings');
+    await navTo('data');
     for (let i = 0; i < 5; i += 1) {
       await clickByText('导出全部 JSON', '.iw-main');
       await new Promise((r) => setTimeout(r, 350));
     }
     await new Promise((r) => setTimeout(r, 500));
+    await navTo('connection');
     const logInfo = await page.evaluate(() => {
       const items = Array.from(document.querySelectorAll('.iw-log-item')).map((n) => (n.textContent || '').replace(/\s+/g, ' ').trim());
       const title = document.querySelector('.iw-log-title');
@@ -894,6 +1005,7 @@ function apiPayload(name, buf) {
     const cdp = await page.createCDPSession();
     await cdp.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir });
     await goto('/settings');
+    await navTo('data');
     const clicked = await clickByText('导出全部 Excel', '.iw-main');
     let xlsxFile = null;
     const start = Date.now();
@@ -993,6 +1105,7 @@ function apiPayload(name, buf) {
     /* ---------------- v6.2 计划清单 + 身高码（浏览器逐项验证） ---------------- */
     // 需求 1：创建清单 → 记录加入清单 → 按清单筛选 → 刷新后仍在 → 同步写回 plans.json
     await goto('#/settings');
+    await navTo('plans');
     const planInputOk = await page.evaluate(() => !!document.querySelector('[data-testid="iw-new-plan-name"]'));
     record('v6.2-1 设置页有「计划清单」管理区（新建输入框存在）', planInputOk, planInputOk ? '找到新建输入框' : '未找到');
     if (planInputOk) {
@@ -1031,6 +1144,13 @@ function apiPayload(name, buf) {
         await goto('#/list');
         await clickByText('筛选条件');
         await new Promise((r) => setTimeout(r, 500));
+        const filterChipLabels = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-filter-panel button'))
+          .map((b) => b.getAttribute('aria-label') || ''));
+        record('v6.4-7 筛选面板不再出现「推荐」「计划」筛选项（计划清单保留）',
+          !filterChipLabels.some((l) => l.includes('推荐'))
+            && !filterChipLabels.some((l) => l.includes('计划') && !l.includes('计划清单'))
+            && filterChipLabels.some((l) => l.includes('计划清单：2026 春季')),
+          `面板按钮 ${filterChipLabels.length} 个`);
         await page.evaluate(() => {
           const btn = Array.from(document.querySelectorAll('.iw-filter-panel button'))
             .find((b) => (b.getAttribute('aria-label') || '').includes('计划清单：2026 春季'));
@@ -1267,6 +1387,7 @@ function apiPayload(name, buf) {
 
     // 设置页删除该候选：先看提示（说明在用记录数），确认后删除
     await goto('#/settings');
+    await navTo('options');
     await new Promise((r) => setTimeout(r, 600));
     const optDeleteClicked = await page.evaluate((val) => {
       const btn = Array.from(document.querySelectorAll('[data-testid="iw-options-admin"] button'))
@@ -1374,6 +1495,7 @@ function apiPayload(name, buf) {
     await page.goto(`http://127.0.0.1:${PORT}/#/settings`, { waitUntil: 'networkidle2' });
     await page.reload({ waitUntil: 'networkidle2' });
     await new Promise((r) => setTimeout(r, 900));
+    await navTo('data');
 
     // 阶段 B 的脏数据里含一条「名称为空」的空壳记录（#795）——「数据体检」必须把它识别出来
     const dirtyHealth = await bodyText();
@@ -1382,6 +1504,7 @@ function apiPayload(name, buf) {
       dirtyHealth.includes('#795') ? '数据体检列出了 #795' : '未识别出 #795');
 
     const putBefore = putCount;
+    await navTo('connection');
     await clickByText('同步到 GitHub', '.iw-main');
     await waitFor(async () => {
       if (putCount > putBefore) return true;
@@ -1475,16 +1598,33 @@ function apiPayload(name, buf) {
 
     await goto(`#/detail/${staleA.id}`);
     const staleADetail = await bodyText();
+    const staleAKeys = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-kv-key'))
+      .map((n) => (n.textContent || '').trim()));
+    await goto(`#/editor/${staleA.id}`);
+    const staleAPlan = await page.evaluate(() => {
+      const sel = document.querySelector('#fld-计划');
+      return sel ? sel.value : null;
+    });
     record('v6.1-C 「想做：想做」加载时归一为「计划：在计划中」，「女士全码」映射为字母码全码',
-      staleADetail.includes('计划') && staleADetail.includes('在计划中')
-        && staleADetail.includes('XS、S、M、L、XL、2XL、3XL、4XL'),
-      `#${staleA.id} 详情已含新字段值`);
+      staleAPlan === '在计划中'
+        && staleAKeys.includes('电子版尺码')
+        && staleADetail.includes('XS') && staleADetail.includes('2XL') && staleADetail.includes('4XL'),
+      `#${staleA.id} keys=${staleAKeys.join('、')}；#fld-计划=${staleAPlan}；详情片段=${staleADetail.replace(/\s+/g, ' ').slice(0, 160)}`);
 
     await goto(`#/detail/${staleB.id}`);
     const staleBDetail = await bodyText();
+    const staleBKeys = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-kv-key'))
+      .map((n) => (n.textContent || '').trim()));
+    await goto(`#/editor/${staleB.id}`);
+    const staleBPlan = await page.evaluate(() => {
+      const sel = document.querySelector('#fld-计划');
+      return sel ? sel.value : null;
+    });
     record('v6.1-C 字符串尺码拆开映射（大小童全码→身高码；男士全码丢弃），「不确定」归一为「不是现在」',
-      staleBDetail.includes('不是现在') && staleBDetail.includes('100、110、120、130、140、150、160、170、180'),
-      `#${staleB.id} 详情已含映射结果`);
+      staleBPlan === '不是现在'
+        && staleBKeys.includes('电子版尺码')
+        && staleBDetail.includes('110') && staleBDetail.includes('170') && staleBDetail.includes('180'),
+      `#${staleB.id} keys=${staleBKeys.join('、')}；#fld-计划=${staleBPlan}；详情片段=${staleBDetail.replace(/\s+/g, ' ').slice(0, 160)}`);
     record('v6.1-C 兜底归一只发生在内存，未触发写回（PUT 不增加）', putCount === putBeforeC,
       `PUT 次数 ${putCount - putBeforeC}`);
 

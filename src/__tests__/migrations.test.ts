@@ -215,6 +215,40 @@ describe('结构归一（normalizeToCurrent）', () => {
     expect(out[0].拥有形态).toEqual(['电子版']);
     expect('关联' in (out[0] as unknown as Record<string, unknown>)).toBe(false);
   });
+
+  it('v6.4 幂等修正：自报最新版但含 v6.1 旧键时，重放归一不清空真实「拥有形态」（current-wins）', () => {
+    // v6.1-C 场景：旧浏览器缓存自报 schemaVersion 5，但记录里还有「想做 / 电子版尺码组」旧键。
+    // normalizeToCurrent 会重放 1→2（补第三态）+ 3→4（形态合并）——
+    // 记录自带的「拥有形态」数组是真实取值，不能被重放产物（电子版=不确定）清空。
+    const stale = {
+      id: 901,
+      名称: '旧缓存归一样本',
+      品牌: '品牌甲',
+      分类: [],
+      款式: '',
+      季节: '',
+      教程: '有',
+      拥有形态: ['电子版'],
+      纸质版尺码: [],
+      推荐: '未评价',
+      做过: false,
+      备注: '',
+      想做: '想做',
+      电子版尺码组: ['女士全码'],
+    } as unknown as RecordItem;
+    const res = applyMigrations({
+      schemaVersion: 5, dataVersion: 1, updatedAt: '', records: [stale],
+    }, DEFAULT_SCHEMA);
+    const out = res.records[0] as unknown as Record<string, unknown>;
+    expect(out.拥有形态).toEqual(['电子版']);
+    expect(out.计划).toBe('在计划中');
+    expect(out.电子版尺码).toEqual(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL']);
+    // 归一后的结果再次执行应保持幂等
+    const again = applyMigrations({
+      schemaVersion: CURRENT_SCHEMA_VERSION, dataVersion: 1, updatedAt: '', records: res.records,
+    }, DEFAULT_SCHEMA);
+    expect(again.records[0]).toEqual(res.records[0]);
+  });
 });
 
 describe('旧字段扫描（写回闸门用）', () => {

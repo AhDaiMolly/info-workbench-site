@@ -211,12 +211,15 @@ export function migrate_3_to_4(records: RecordItem[], schema: Schema): RecordIte
     const currentIsArray = Array.isArray(current);
 
     if (hasOldKeys || !currentIsArray) {
-      // 旧键优先归一（数据仓尚未迁移时）；已是新结构且字段缺失 → 按缺省（皆无）处理
+      // 旧键优先归一（数据仓尚未迁移时）；已是新结构且字段缺失 → 按缺省（皆无）处理。
+      // v6.4 幂等修正：normalizeToCurrent 会把 1→2 的「补第三态」重放到已是新结构的记录上，
+      // 此时记录自带的「拥有形态」数组才是真实取值（旧三态键只是重放产物）——current-wins，
+      // 自带非空「拥有形态」时以它为准，避免旧键优先把真实值清空。
       const fromOld = normalizeOwnershipFormats(out.电子版, out.纸质版);
       const fromCurrent = currentIsArray
         ? current.map((v) => String(v)).filter((v) => OWNERSHIP_FORMAT_OPTIONS.includes(v))
         : [];
-      const merged = hasOldKeys ? fromOld : fromCurrent;
+      const merged = hasOldKeys && fromCurrent.length === 0 ? fromOld : fromCurrent;
       out.拥有形态 = OWNERSHIP_FORMAT_OPTIONS.filter((o) => merged.includes(o));
     }
 

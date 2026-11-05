@@ -139,6 +139,14 @@ describe('全文搜索', () => {
     expect(out2.map((r) => r.id)).toEqual([2]);
   });
 
+  it('v6.4 · 需求 7：全文搜索不索引「推荐」「计划」字段值', () => {
+    // 样本里存在 推荐=不推荐/未评价、计划=在计划中/未标记 的记录，但搜索范围只有名称/品牌/备注/编号
+    expect(searchIds(sample, '不推荐')).toEqual([]);
+    expect(searchIds(sample, '未评价')).toEqual([]);
+    expect(searchIds(sample, '在计划中')).toEqual([]);
+    expect(searchIds(sample, '未标记')).toEqual([]);
+  });
+
   it('清空搜索恢复筛选结果', () => {
     expect(applyQuery(sample, filters({ 品牌: ['品牌甲'] }), '').length).toBe(2);
   });
@@ -193,8 +201,10 @@ describe('看板统计', () => {
     const stats = computeStats(sample);
     expect(stats.total).toBe(4);
     expect(stats.做过).toBe(1);
-    expect(stats.计划).toBe(1);
+    // v6.4：看板统计移除「计划」与完成度口径
     expect('有教程' in (stats as unknown as Record<string, unknown>)).toBe(false);
+    expect('计划' in (stats as unknown as Record<string, unknown>)).toBe(false);
+    expect('completion' in (stats as unknown as Record<string, unknown>)).toBe(false);
   });
 
   it('v5：拥有形态分四态且互斥完备（皆无 / 仅电子 / 仅纸质 / 双有）', () => {
@@ -303,13 +313,11 @@ describe('v6.1 · 需求 2 计划字段筛选', () => {
     expect(sample.filter((r) => matchesFilters(r, filters({ 计划: ['在计划中', '不想做'] }))).map((r) => r.id)).toEqual([1, 3]);
   });
 
-  it('看板完成度口径含全部四个新选项', () => {
+  it('v6.4：看板统计不再输出完成度口径（completion 已删除），但计划字段筛选仍可用', () => {
     const stats = computeStats(sample);
-    expect(stats.completion.map((c) => c.name)).toEqual(['在计划中', '不是现在', '不想做', '未标记']);
-    expect(stats.completion.find((c) => c.name === '在计划中')?.value).toBe(1);
-    expect(stats.completion.find((c) => c.name === '不是现在')?.value).toBe(1);
-    expect(stats.completion.find((c) => c.name === '不想做')?.value).toBe(1);
-    expect(stats.completion.find((c) => c.name === '未标记')?.value).toBe(1);
+    expect((stats as unknown as Record<string, unknown>).completion).toBeUndefined();
+    // 筛选模型保留「计划」键（旧筛选方案 / 旧 URL 兼容），matchesFilters 不受影响
+    expect(sample.filter((r) => matchesFilters(r, filters({ 计划: ['在计划中'] }))).map((r) => r.id)).toEqual([1]);
   });
 });
 

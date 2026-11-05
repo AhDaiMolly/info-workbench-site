@@ -73,19 +73,20 @@ describe('内置 schema', () => {
   });
 });
 
-describe('v5 · R1 列表默认列', () => {
-  it('默认 8 列：名称 / 品牌 / 分类 / 款式 / 季节 / 形态 / 教程 / 标记', () => {
+describe('列表默认列（v6.4 口径）', () => {
+  it('默认 8 列：名称 / 品牌 / 分类 / 款式 / 季节 / 形态 / 教程 / 做过', () => {
     expect(DEFAULT_VISIBLE_COLUMNS).toEqual([
-      '名称', '品牌', '分类', '款式', '季节', '形态', '教程', '标记',
+      '名称', '品牌', '分类', '款式', '季节', '形态', '教程', '做过',
     ]);
     expect(DEFAULT_VISIBLE_COLUMNS.length).toBe(8);
   });
 
-  it('「形态」「标记」是派生列，不是数据字段', () => {
-    expect(DERIVED_LIST_COLUMNS).toEqual(['形态', '标记']);
+  it('v6.4：「形态」是唯一的派生列；「标记」列删除，「做过」是数据字段不再是派生列', () => {
+    expect(DERIVED_LIST_COLUMNS).toEqual(['形态']);
     const keys = DEFAULT_SCHEMA.fields.map((f) => f.key);
     expect(keys).not.toContain('形态');
     expect(keys).not.toContain('标记');
+    expect(keys).toContain('做过');
   });
 
   it('R3：尺码与备注收进详情页，不在默认列里', () => {

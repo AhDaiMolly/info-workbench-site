@@ -14,6 +14,18 @@ import { findShellRecords } from '../../store/migrations';
 import { Modal } from '../../components/Modal';
 import { BUILD_INFO, buildInfoText, buildDateText } from '../../version';
 
+/** v6.4（需求 2）：设置页二级导航分组 —— 设置项按类别归组，点导航只渲染当前分组的卡片。
+ *  连接与同步 = 数据仓库连接 + 同步和备份；数据管理 = 导出 / 数据体检 / 待确认清单。 */
+type SettingsGroupId = 'connection' | 'data' | 'plans' | 'options' | 'version';
+
+const SETTINGS_GROUPS: Array<{ id: SettingsGroupId; label: string }> = [
+  { id: 'connection', label: '连接与同步' },
+  { id: 'data', label: '数据管理' },
+  { id: 'plans', label: '计划清单' },
+  { id: 'options', label: '字段选项' },
+  { id: 'version', label: '版本信息' },
+];
+
 export function SettingsView() {
   const app = useApp();
   const [repoUrl, setRepoUrl] = useState('');
@@ -29,6 +41,8 @@ export function SettingsView() {
   const [optionDeleteTarget, setOptionDeleteTarget] = useState<{
     fieldKey: string; fieldLabel: string; value: string; usage: number;
   } | null>(null);
+  // v6.4（需求 2）：设置二级导航当前分组
+  const [activeGroup, setActiveGroup] = useState<SettingsGroupId>('connection');
 
   useEffect(() => {
     if (app.config) {
@@ -74,6 +88,24 @@ export function SettingsView() {
         </div>
       </div>
 
+      {/* v6.4（需求 2）：设置二级导航 —— 按类别分组；移动端横向可滚动（见 .iw-subnav 样式） */}
+      <nav className="iw-subnav" aria-label="设置分类" data-testid="iw-settings-nav">
+        {SETTINGS_GROUPS.map((g) => (
+          <button
+            key={g.id}
+            type="button"
+            className={`iw-btn iw-btn-sm iw-subnav-item${activeGroup === g.id ? ' iw-subnav-on' : ''}`}
+            data-testid={`iw-settings-nav-${g.id}`}
+            aria-current={activeGroup === g.id ? 'page' : undefined}
+            onClick={() => setActiveGroup(g.id)}
+          >
+            {g.label}
+          </button>
+        ))}
+      </nav>
+
+      {activeGroup === 'connection' ? (
+      <>
       <div className="iw-settings-card">
         <h2 className="iw-settings-title">数据仓库连接</h2>
         <p className="iw-settings-desc">
@@ -206,7 +238,10 @@ export function SettingsView() {
         </div>
       </div>
 
-      {/* v4：导出入口统一收在这里（列表页不再放导出按钮） */}
+      </>
+      ) : null}
+
+      {activeGroup === 'data' ? (
       <div className="iw-settings-card">
         <h2 className="iw-settings-title">数据管理</h2>
         <p className="iw-settings-desc">
@@ -294,9 +329,9 @@ export function SettingsView() {
           )}
         </div>
       </div>
+      ) : null}
 
-      {/* v6（需求 1）：底部信息区 —— 展示站点代码版本（构建时注入，见 vite.config.ts） */}
-      {/* v6.2（需求 1）：计划清单管理 —— 新建 / 重命名 / 删除 */}
+      {activeGroup === 'plans' ? (
       <div className="iw-settings-card">
         <h2 className="iw-settings-title">计划清单</h2>
         <div className="iw-chip-group" data-testid="iw-plans-admin">
@@ -359,8 +394,9 @@ export function SettingsView() {
           计划清单用于把记录归入自定义分组（一条记录可属于多份清单），与「状态及评价」里的「计划」状态互不影响。删除清单只解除记录关联，不删除记录本身。
         </div>
       </div>
+      ) : null}
 
-      {/* v6.3（需求 2）：字段选项管理 —— 品牌 / 款式的录入候选可删除 / 恢复 */}
+      {activeGroup === 'options' ? (
       <div className="iw-settings-card">
         <h2 className="iw-settings-title">字段选项管理</h2>
         {(() => {
@@ -439,7 +475,9 @@ export function SettingsView() {
           历史记录的取值保持原样显示，不受影响。
         </div>
       </div>
+      ) : null}
 
+      {activeGroup === 'version' ? (
       <div className="iw-settings-card">
         <h2 className="iw-settings-title">版本信息</h2>
         <div className="iw-kv-list" data-testid="iw-version-info">
@@ -464,6 +502,7 @@ export function SettingsView() {
           版本号与构建信息在每次发布时自动生成。如果发现线上功能与手册描述不一致，可先核对这里的版本号是否为最新。
         </div>
       </div>
+      ) : null}
 
       {/* v6.2（需求 1）：重命名 / 删除确认弹窗 */}
       <Modal

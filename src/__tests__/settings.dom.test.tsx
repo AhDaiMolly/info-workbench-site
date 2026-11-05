@@ -57,6 +57,13 @@ vi.mock('../store/store', () => ({
 // eslint-disable-next-line import/first
 import { SettingsView } from '../features/settings/SettingsView';
 
+/** v6.4（需求 2）：点二级导航切到指定分组（只渲染该分组的卡片） */
+const openSettingsGroup = (id: string) => {
+  const btn = document.querySelector(`[data-testid="iw-settings-nav-${id}"]`) as HTMLButtonElement | null;
+  expect(btn).not.toBeNull();
+  fireEvent.click(btn!);
+};
+
 beforeEach(() => {
   cleanup();
   stateHolder.records = [];
@@ -66,15 +73,16 @@ beforeEach(() => {
   restoreFieldOptionMock.mockClear();
 });
 
-describe('v6 · 需求 1 设置页版本信息', () => {
-  it('底部信息区展示「版本信息」卡片', () => {
+describe('v6 · 需求 1 设置页版本信息（v6.4 起在「版本信息」分组下）', () => {
+  it('点导航「版本信息」后展示版本信息卡片', () => {
     render(<SettingsView />);
-    expect(screen.getAllByText('版本信息').length).toBeGreaterThan(0);
+    openSettingsGroup('version');
     expect(document.querySelector('[data-testid="iw-version-info"]')).not.toBeNull();
   });
 
   it('版本文本包含当前构建版本号', () => {
     render(<SettingsView />);
+    openSettingsGroup('version');
     const el = document.querySelector('[data-testid="iw-version-text"]');
     expect(el).not.toBeNull();
     expect(el!.textContent).toContain(BUILD_INFO.version);
@@ -82,10 +90,53 @@ describe('v6 · 需求 1 设置页版本信息', () => {
 
   it('同时展示版本号 / 构建日期 / 提交三项字段', () => {
     render(<SettingsView />);
+    openSettingsGroup('version');
     const text = document.body.textContent ?? '';
     expect(text).toContain('版本号');
     expect(text).toContain('构建日期');
     expect(text).toContain('提交');
+  });
+});
+
+describe('v6.4 · 需求 2 设置页二级导航（分组菜单）', () => {
+  it('渲染 5 个分组导航：连接与同步 / 数据管理 / 计划清单 / 字段选项 / 版本信息', () => {
+    render(<SettingsView />);
+    const labels = Array.from(document.querySelectorAll('[data-testid^="iw-settings-nav-"]'))
+      .map((el) => el.textContent);
+    expect(labels).toEqual(['连接与同步', '数据管理', '计划清单', '字段选项', '版本信息']);
+  });
+
+  it('默认分组为「连接与同步」：展示数据仓库连接与同步和备份，其它分组卡片不渲染', () => {
+    const { container } = render(<SettingsView />);
+    expect(container.textContent).toContain('数据仓库连接');
+    expect(container.textContent).toContain('同步和备份');
+    expect(container.textContent).not.toContain('导出全部 JSON');
+    expect(container.textContent).not.toContain('字段选项管理');
+    expect(container.textContent).not.toContain('版本号');
+  });
+
+  it('每个分组点开后可达且互斥：数据管理 / 计划清单 / 字段选项 / 版本信息', () => {
+    const { container } = render(<SettingsView />);
+
+    openSettingsGroup('data');
+    expect(container.textContent).toContain('导出全部 JSON');
+    expect(container.textContent).not.toContain('数据仓库连接');
+
+    openSettingsGroup('plans');
+    expect(container.textContent).toContain('新建清单');
+    expect(container.textContent).not.toContain('导出全部 JSON');
+
+    openSettingsGroup('options');
+    expect(container.textContent).toContain('字段选项管理');
+    expect(container.textContent).not.toContain('新建清单');
+
+    openSettingsGroup('version');
+    expect(container.textContent).toContain('版本号');
+    expect(container.textContent).not.toContain('字段选项管理');
+
+    openSettingsGroup('connection');
+    expect(container.textContent).toContain('数据仓库连接');
+    expect(container.textContent).not.toContain('版本号');
   });
 });
 
@@ -96,6 +147,7 @@ describe('v6.3 · 需求 2：设置页「字段选项管理」', () => {
     stateHolder.options = { 品牌: { added: ['新牌子'], removed: ['旧牌子'] } };
 
     render(<SettingsView />);
+    openSettingsGroup('options');
 
     expect(document.querySelector('[data-testid="iw-options-admin"]')).not.toBeNull();
     // 每个候选展示「在用记录数」
@@ -117,6 +169,7 @@ describe('v6.3 · 需求 2：设置页「字段选项管理」', () => {
   it('没有候选时给出引导文案', () => {
     stateHolder.optionCandidates = {};
     render(<SettingsView />);
+    openSettingsGroup('options');
     expect(document.body.textContent).toContain('暂无候选选项');
   });
 });

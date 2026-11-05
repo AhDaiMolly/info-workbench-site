@@ -612,3 +612,20 @@
 .iw-quick-tags { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .iw-quick-tags-label { font-size: 12px; color: var(--iw-text-3); min-width: 36px; }
 .iw-chip-quick { padding: 2px 9px; font-size: 12px; }
+
+/* ------------------------------------------------------------------ */
+/* v6.4（需求 2）：设置页二级导航 —— 桌面一行排开，窄屏横向滚动不换行     */
+/* ------------------------------------------------------------------ */
+.iw-subnav {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 var(--iw-s4);
+  overflow-x: auto; white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.iw-subnav-item { flex: 0 0 auto; }
+.iw-subnav-item.iw-subnav-on {
+  background: var(--iw-primary, #2563eb);
+  border-color: var(--iw-primary, #2563eb);
+  color: #fff;
+}

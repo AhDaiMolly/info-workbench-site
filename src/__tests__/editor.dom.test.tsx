@@ -81,10 +81,11 @@ import { EditorForm } from '../features/editor/EditorForm';
 // eslint-disable-next-line import/first
 import { DetailView } from '../features/detail/DetailView';
 
-const SECTION_TITLES = ['基础信息', '拥有形态', '状态及评价', '备注', '系统信息'];
-// v6.2（需求 1）：详情页在五分区之后额外渲染「计划清单」卡片
+// v6.4（需求 3）：「系统信息」分区不再展示，分区收敛为 4 个
+const SECTION_TITLES = ['基础信息', '拥有形态', '状态及评价', '备注'];
+// v6.2（需求 1）：详情页在分区之后额外渲染「计划清单」卡片
 const DETAIL_SECTION_TITLES = [...SECTION_TITLES, '计划清单'];
-// v6.2.1（需求 1）：新增/编辑表单在五分区之后同样追加「计划清单」分区
+// v6.2.1（需求 1）：新增/编辑表单在分区之后同样追加「计划清单」分区
 const EDITOR_SECTION_TITLES = [...SECTION_TITLES, '计划清单'];
 
 beforeEach(() => {
@@ -99,8 +100,8 @@ beforeEach(() => {
   togglePlanMock.mockClear();
 });
 
-describe('编辑表单：五分区版面', () => {
-  it('按 基础信息 / 拥有形态 / 状态及评价 / 备注 / 系统信息 五个分区渲染（v6.2.1 起追加「计划清单」）', () => {
+describe('编辑表单：分区版面（v6.4 起 4 分区 + 计划清单）', () => {
+  it('按 基础信息 / 拥有形态 / 状态及评价 / 备注 四个分区渲染并追加「计划清单」', () => {
     render(<EditorForm recordId={7} />);
     const titles = Array.from(document.querySelectorAll('.iw-detail-group-title')).map((el) => el.textContent);
     expect(titles).toEqual(EDITOR_SECTION_TITLES);
@@ -112,12 +113,22 @@ describe('编辑表单：五分区版面', () => {
     expect(sections.length).toBe(EDITOR_SECTION_TITLES.length);
   });
 
-  it('系统信息分区只读展示记录ID与时间，不提供可编辑控件', () => {
+  it('v6.4（需求 3）：编辑表单不再展示「系统信息」分区与记录编号', () => {
     const { container } = render(<EditorForm recordId={7} />);
-    const sysSection = container.querySelectorAll('.iw-form-section')[4];
-    expect(sysSection.textContent).toContain('记录ID');
-    expect(sysSection.textContent).toContain('2026-01-01');
-    expect(sysSection.querySelectorAll('input, select, textarea').length).toBe(0);
+    const titles = Array.from(container.querySelectorAll('.iw-detail-group-title')).map((el) => el.textContent);
+    expect(titles).not.toContain('系统信息');
+    expect(container.textContent).not.toContain('记录ID');
+    expect(container.textContent).not.toContain('2026-01-01');
+    expect(container.textContent).not.toContain('2026-01-02');
+  });
+
+  it('v6.4（需求 7）：编辑表单保留「推荐」「计划」字段（供手动调整存量数据）', () => {
+    const { container } = render(<EditorForm recordId={7} />);
+    const section = container.querySelectorAll('.iw-form-section')[2]; // 「状态及评价」分区
+    const labels = Array.from(section.querySelectorAll('.iw-label')).map((el) => el.textContent);
+    expect(labels).toContain('推荐');
+    expect(labels).toContain('计划');
+    expect(labels).toContain('做过');
   });
 
   it('已删除字段（关联 / 电子版缺码）不再出现在表单里', () => {
@@ -324,11 +335,12 @@ describe('v6 · 需求 3 形态-尺码联动', () => {
   });
 });
 
-describe('记录详情：五分区版面', () => {
-  it('按同样五个分区渲染（v6.2 起详情页追加「计划清单」卡片）', () => {
+describe('记录详情：分区版面（v6.4 起 4 分区 + 计划清单卡片）', () => {
+  it('按同样四个分区渲染并追加「计划清单」卡片（不再有「系统信息」）', () => {
     render(<DetailView id={7} />);
     const titles = Array.from(document.querySelectorAll('.iw-detail-group-title')).map((el) => el.textContent);
     expect(titles).toEqual(DETAIL_SECTION_TITLES);
+    expect(titles).not.toContain('系统信息');
   });
 
   it('展示 v5 字段名「拥有形态」与取值', () => {
@@ -345,10 +357,49 @@ describe('记录详情：五分区版面', () => {
     expect(container.textContent).not.toContain('关联');
   });
 
-  it('系统信息分区展示创建时间与更新时间', () => {
+  it('v6.4（需求 3）：详情页不展示系统信息（记录编号 / 创建时间 / 更新时间 / 同步状态）', () => {
     const { container } = render(<DetailView id={7} />);
-    expect(container.textContent).toContain('2026-01-01');
-    expect(container.textContent).toContain('2026-01-02');
+    expect(container.textContent).not.toContain('系统信息');
+    expect(container.textContent).not.toContain('记录 #7');
+    expect(container.textContent).not.toContain('2026-01-01');
+    expect(container.textContent).not.toContain('2026-01-02');
+    expect(container.textContent).not.toContain('同步状态');
+  });
+
+  it('v6.4（需求 7）：详情页「状态及评价」只展示「做过」，不展示「推荐」「计划」', () => {
+    const { container } = render(<DetailView id={7} />);
+    const groups = Array.from(container.querySelectorAll('.iw-detail-group'));
+    const stateGroup = groups.find((g) => g.querySelector('.iw-detail-group-title')?.textContent === '状态及评价');
+    expect(stateGroup).toBeTruthy();
+    const labels = Array.from(stateGroup!.querySelectorAll('.iw-kv-key')).map((el) => el.textContent);
+    expect(labels).toContain('做过');
+    expect(labels).not.toContain('推荐');
+    expect(labels).not.toContain('计划');
+    expect(stateGroup!.textContent).not.toContain('未评价');
+    expect(stateGroup!.textContent).not.toContain('未标记');
+  });
+
+  it('v6.4（需求 4 · bug 修复）：详情页未拥有「纸质版」时不展示纸质版尺码字段', () => {
+    // sampleRecord 只拥有「电子版」→ 纸质版尺码整字段不渲染（不再出现「（空）」）
+    const { container } = render(<DetailView id={7} />);
+    expect(container.textContent).not.toContain('纸质版尺码');
+    // 拥有「电子版」但尺码未填 → 电子版尺码按现有空态展示「（空）」
+    expect(container.textContent).toContain('电子版尺码');
+    expect(container.textContent).toContain('（空）');
+  });
+
+  it('v6.4（需求 4 · bug 修复）：拥有「纸质版」但尺码未填时仍按空态展示「（空）」', () => {
+    const withBoth: RecordItem = {
+      ...sampleRecord,
+      id: 8,
+      名称: '双有记录',
+      拥有形态: ['电子版', '纸质版'],
+    };
+    records = [withBoth];
+    const { container } = render(<DetailView id={8} />);
+    expect(container.textContent).toContain('纸质版尺码');
+    expect(container.textContent).toContain('（空）');
+    records = [sampleRecord];
   });
 });
 

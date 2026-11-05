@@ -163,7 +163,6 @@ export function buildStatsRows(stats: {
   season: Array<{ name: string; value: number }>;
   seasonBlank: number;
   ownership: Array<{ name: string; value: number }>;
-  completion: Array<{ name: string; value: number }>;
 }): Array<Record<string, string>> {
   const rows: Array<Record<string, string>> = [];
   const push = (维度: string, 项目: string, 数量: number | string) =>
@@ -177,6 +176,5 @@ export function buildStatsRows(stats: {
   for (const s of stats.season) push('季节分布', s.name, s.value);
   if (stats.seasonBlank) push('季节分布', '未填', stats.seasonBlank);
   for (const o of stats.ownership) push('拥有形态', o.name, o.value);
-  for (const c of stats.completion) push('完成与计划', c.name, c.value);
   return rows;
 }

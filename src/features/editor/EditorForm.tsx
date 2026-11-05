@@ -19,7 +19,6 @@ import { navigate } from '../../router';
 import type { FieldDef, RecordItem } from '../../types';
 import { defaultValueFor, PAPER_SIZE_HEIGHT_TAGS, PAPER_SIZE_LETTER_TAGS } from '../../schema';
 import { buildSectionPlan } from '../../sections';
-import { formatTime } from '../detail/DetailView';
 
 interface Props {
   recordId: number | null;
@@ -51,14 +50,13 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
   // 成员关系先存本地，保存成功后由 store 的 addRecord(values, planIds) 一并写入。
   const [draftPlans, setDraftPlans] = useState<string[]>([]);
 
-  // v3：五分区（与详情页一致）；系统信息分区只读，不进可编辑字段集
-  const sectionPlan = useMemo(() => buildSectionPlan(app.schema), [app.schema]);
+  // v3：分区与详情页一致；v6.4（需求 3）：「系统信息」分区不再展示（系统字段仍参与提交契约之外的数据层，仅不渲染）
+  const sectionPlan = useMemo(
+    () => buildSectionPlan(app.schema).filter((s) => s.title !== '系统信息'),
+    [app.schema],
+  );
   const editableFields = useMemo(
     () => app.schema.fields.filter((f) => !f.system && !f.readonly),
-    [app.schema.fields],
-  );
-  const systemFields = useMemo(
-    () => app.schema.fields.filter((f) => f.system),
     [app.schema.fields],
   );
 
@@ -322,7 +320,8 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
         <div>
           <h1 className="iw-page-title">{existing ? '编辑记录' : '新增记录'}</h1>
           <p className="iw-page-sub">
-            {existing ? `#${existing.id} ${existing.名称}` : '带 * 的字段为必填项；品牌、款式可直接输入新值并自动加入选项'}
+            {/* v6.4（需求 3）：编辑表单头部不再展示记录编号 */}
+            {existing ? `正在编辑：${existing.名称}` : '带 * 的字段为必填项；品牌、款式可直接输入新值并自动加入选项'}
           </p>
         </div>
         <div className="iw-actions-row">
@@ -345,27 +344,8 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
         {sectionPlan.map((section) => (
           <div className="iw-form-section" key={section.title}>
             <div className="iw-detail-group-title">{section.title}</div>
-            {section.title === '系统信息' ? (
-              <div className="iw-detail-grid">
-                {systemFields.map((f) => {
-                  const raw = (existing as unknown as Record<string, unknown> | null)?.[f.jsonKey];
-                  return (
-                    <div className="iw-kv" key={f.key}>
-                      <span className="iw-kv-key">{f.label}</span>
-                      <span className="iw-kv-val">
-                        {f.type === 'datetime' ? formatTime(String(raw ?? '')) : String(raw ?? '—')}
-                      </span>
-                    </div>
-                  );
-                })}
-                <div className="iw-kv">
-                  <span className="iw-kv-key">记录ID</span>
-                  <span className="iw-kv-val">{existing ? existing.id : '（保存后生成）'}</span>
-                </div>
-              </div>
-            ) : (
-              <div className="iw-form-grid">
-                {section.fields
+            <div className="iw-form-grid">
+              {section.fields
                   .filter((f) => !f.system && !f.readonly)
                   .map((f) => {
                     // v6（需求 3）：形态-尺码联动 —— 勾选「电子版」才展示电子版尺码，
@@ -402,7 +382,6 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
                     );
                   })}
               </div>
-            )}
           </div>
         ))}
 

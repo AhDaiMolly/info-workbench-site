@@ -87,9 +87,17 @@ beforeEach(() => {
   holder.ignoredChecks = DEFAULT_IGNORED;
 });
 
+/** v6.4（需求 2）：待确认清单在「数据管理」分组下 —— 先点导航再断言 */
+const openSettingsGroup = (id: string) => {
+  const btn = document.querySelector(`[data-testid="iw-settings-nav-${id}"]`) as HTMLButtonElement | null;
+  expect(btn).not.toBeNull();
+  fireEvent.click(btn!);
+};
+
 describe('v6.1.1 设置页「待确认清单」区', () => {
   it('展示当前核对结果与已忽略条数', () => {
     render(<SettingsView />);
+    openSettingsGroup('data');
     const block = document.querySelector('[data-testid="iw-pending-checks-block"]');
     expect(block).not.toBeNull();
     expect(block!.textContent).toContain('1 条矛盾记录');
@@ -98,6 +106,7 @@ describe('v6.1.1 设置页「待确认清单」区', () => {
 
   it('已忽略条目逐条列出并标注当前状态（仍存在 / 已检测不到）', () => {
     render(<SettingsView />);
+    openSettingsGroup('data');
     const items = screen.getAllByTestId('iw-ignored-item');
     expect(items).toHaveLength(2);
     expect(items[0].textContent).toContain('#378 矛盾·电子版尺码（晨雾1361单排扣打格棉服）');
@@ -108,6 +117,7 @@ describe('v6.1.1 设置页「待确认清单」区', () => {
 
   it('每条「恢复」回调带对应 key；「全部恢复」一键回调', () => {
     render(<SettingsView />);
+    openSettingsGroup('data');
     const buttons = screen.getAllByRole('button', { name: '恢复' });
     expect(buttons).toHaveLength(2); // 两条单条「恢复」（「全部恢复」按钮名不同）
     fireEvent.click(buttons[0]);
@@ -119,6 +129,8 @@ describe('v6.1.1 设置页「待确认清单」区', () => {
   it('无已忽略条目时展示空态提示，恢复按钮禁用', () => {
     holder.ignoredChecks = [];
     render(<SettingsView />);
+    openSettingsGroup('data');
+    openSettingsGroup('data');
     const block = document.querySelector('[data-testid="iw-pending-checks-block"]');
     expect(block).not.toBeNull();
     expect(block!.textContent).toContain('没有已忽略的条目');

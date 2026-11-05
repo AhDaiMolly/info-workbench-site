@@ -118,11 +118,10 @@ export function DashboardView() {
     };
   }, [stats]);
 
-  // v4：移除「有教程」统计口径（KPI 卡片与相关口径一并清理）
+  // v6.4：看板页移除「计划」相关展示 —— KPI 只保留 总记录 / 做过，图表均为分布口径，无计划语义
   const kpis = [
     { label: '总记录', value: stats.total, note: '当前筛选范围内' },
     { label: '做过', value: stats.做过, note: '已实际完成' },
-    { label: '计划', value: stats.计划, note: '在计划中' },
   ];
 
   return (

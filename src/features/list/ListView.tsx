@@ -13,7 +13,7 @@ import { ColumnConfig } from './ColumnConfig';
 import { ConflictsBanner } from './ConflictsBanner';
 import { Modal } from '../../components/Modal';
 import { DEFAULT_VISIBLE_COLUMNS } from '../../schema';
-import { markIcons, ownershipIcons, tutorialIcon, tutorialIsKnown, truncateTags } from './derivedCells';
+import { doneIcon, ownershipIcons, tutorialIcon, truncateTags } from './derivedCells';
 import type { RecordItem, SortKey } from '../../types';
 
 const SORTABLE: SortKey[] = ['id', '名称', '更新时间'];
@@ -23,7 +23,12 @@ export function ListView() {
   const { records, filters, query, sort, visibleColumns, page, pageSize } = app;
   const [pendingDelete, setPendingDelete] = useState<number | null>(null);
 
-  const visible = visibleColumns.length ? visibleColumns : DEFAULT_VISIBLE_COLUMNS;
+  // v6.4：旧偏好（localStorage）里可能还存着已删除的「标记」列——渲染前过滤并去重；
+  // 清洗后为空则回落到默认列集。
+  const visible = useMemo(() => {
+    const cleaned = Array.from(new Set(visibleColumns.filter((c) => c !== '标记')));
+    return cleaned.length ? cleaned : DEFAULT_VISIBLE_COLUMNS;
+  }, [visibleColumns]);
 
   const filtered = useMemo(
     () => applyQuery(records, filters, query, app.indexes, app.planMembers),
@@ -61,36 +66,21 @@ export function ListView() {
         </span>
       );
     }
-    // v5（R2）：派生列「标记」—— 想做 / 做过 / 推荐 的图标组合
-    if (col === '标记') {
-      const marks = markIcons(r);
-      if (!marks.length) return <span className="iw-cell-muted">—</span>;
-      return (
-        <span className="iw-icon-cell">
-          {marks.map((m, i) => (
-            <span
-              key={`${m.field}-${i}`}
-              className={`iw-icon-cell-item${m.tone === 'negative' ? ' iw-icon-negative' : ''}`}
-              title={m.field}
-            >
-              {m.char}
-            </span>
-          ))}
-        </span>
-      );
+    // v6.4：「做过」列（替代原「标记」派生列）—— 做过 = ✓，其余留空
+    if (col === '做过') {
+      const icon = doneIcon(r.做过);
+      if (!icon) return <span />;
+      return <span className="iw-icon-cell-item" title="做过">{icon}</span>;
     }
-    // v5（R1）：派生列「教程」—— 有 = ▶ / 无 = ∅ / 未知 = 灰○
+    // v6.4：「教程」列三态 —— 有 = ✓ / 无 = ✗ / 未填或未知取值 = 留空
     if (col === '教程') {
-      const known = tutorialIsKnown(r.教程);
-      return (
-        <span
-          className={known ? 'iw-icon-cell-item' : 'iw-icon-cell-item iw-icon-negative'}
-          title={`教程：${String(r.教程 ?? '未知')}`}
-        >
-          {tutorialIcon(r.教程)}
-        </span>
-      );
+      const icon = tutorialIcon(r.教程);
+      if (!icon) return <span />;
+      return <span className="iw-icon-cell-item" title={`教程：${String(r.教程 ?? '')}`}>{icon}</span>;
     }
+    // v6.4（bug 修复）：未拥有对应形态时，尺码列留空（不再是「—」）；拥有但未填才走下方通用空态「—」
+    if (col === '电子版尺码' && !(r.拥有形态 ?? []).includes('电子版')) return <span />;
+    if (col === '纸质版尺码' && !(r.拥有形态 ?? []).includes('纸质版')) return <span />;
     // v5（R1）：分类列最多 2 个标签 + 「+n」
     if (col === '分类') {
       const { shown, extra } = truncateTags(r.分类);

@@ -55,6 +55,26 @@ export function DetailView({ id }: { id: number | null }) {
   // v3：五分区由 schema 驱动（远端新增字段也能落到正确分区）
   const plan = buildSectionPlan(app.schema);
 
+  /* v6.4 三项展示调整（只影响展示，数据不动）：
+   *   · 需求 3：「系统信息」分区整体不再展示（记录ID / 创建·更新时间等系统字段；同步状态一并隐藏）
+   *   · 需求 4：未拥有对应形态时，该形态的尺码字段不展示；拥有但未填才按空态规则显示「（空）」
+   *   · 需求 7：「状态及评价」分区不再展示「推荐」「计划」两个字段（编辑表单仍保留） */
+  const ownsE = (record.拥有形态 ?? []).includes('电子版');
+  const ownsP = (record.拥有形态 ?? []).includes('纸质版');
+  const visiblePlan = plan
+    .filter((section) => section.title !== '系统信息')
+    .map((section) => ({
+      ...section,
+      fields: section.fields.filter((f) => {
+        if (section.title === '拥有形态') {
+          if (f.jsonKey === '电子版尺码' && !ownsE) return false;
+          if (f.jsonKey === '纸质版尺码' && !ownsP) return false;
+        }
+        if (section.title === '状态及评价' && (f.jsonKey === '推荐' || f.jsonKey === '计划')) return false;
+        return true;
+      }),
+    }));
+
   const renderField = (field: FieldDef) => {
     const raw = (record as unknown as Record<string, unknown>)[field.jsonKey];
     const value = field.type === 'datetime'
@@ -75,10 +95,8 @@ export function DetailView({ id }: { id: number | null }) {
     <>
       <div className="iw-page-head">
         <div>
-          <h1 className="iw-page-title">{record.名称 || `记录 #${record.id}`}</h1>
-          <p className="iw-page-sub">
-            记录 #{record.id}
-          </p>
+          {/* v6.4（需求 3）：不再展示记录 ID（系统信息不对外展示；标题兜底也不再使用编号） */}
+          <h1 className="iw-page-title">{record.名称 || '（未命名）'}</h1>
         </div>
         <div className="iw-actions-row">
           <button
@@ -99,11 +117,10 @@ export function DetailView({ id }: { id: number | null }) {
       </div>
 
       <div className="iw-settings-card" style={{ maxWidth: 'none' }}>
-        {plan.map((section) => (
+        {visiblePlan.map((section) => (
           <div
             className="iw-detail-group"
             key={section.title}
-            style={section.title === '系统信息' ? { marginBottom: 0 } : undefined}
           >
             <div className="iw-detail-group-title">{section.title}</div>
             {section.fields.length ? (
@@ -113,16 +130,6 @@ export function DetailView({ id }: { id: number | null }) {
             ) : (
               <div className="iw-cell-muted">（本分区暂无字段）</div>
             )}
-            {section.title === '系统信息' ? (
-              <div className="iw-detail-grid" style={{ marginTop: 8 }}>
-                <div className="iw-kv">
-                  <span className="iw-kv-key">同步状态</span>
-                  <span className="iw-kv-val">
-                    {app.pending.some((p) => p.记录ID === record.id) ? '未同步' : '已同步'}
-                  </span>
-                </div>
-              </div>
-            ) : null}
           </div>
         ))}
       </div>

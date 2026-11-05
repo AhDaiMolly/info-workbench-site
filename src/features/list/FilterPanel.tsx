@@ -167,14 +167,7 @@ export function FilterPanel(props: Props) {
               <div className="iw-filter-block-title">教程</div>
               {chips('教程', optionsOf(schema, '教程'))}
             </div>
-            <div>
-              <div className="iw-filter-block-title">推荐</div>
-              {chips('推荐', optionsOf(schema, '推荐'))}
-            </div>
-            <div>
-              <div className="iw-filter-block-title">计划</div>
-              {chips('计划', optionsOf(schema, '计划'))}
-            </div>
+            {/* v6.4（需求 7）：筛选面板移除「推荐」「计划」入口（旧筛选方案 / 旧 URL 仍可解析，只是不再展示） */}
             <div>
               <div className="iw-filter-block-title">电子版尺码</div>
               {chips('电子版尺码', esizeFilterOptions, '电子版尺码')}

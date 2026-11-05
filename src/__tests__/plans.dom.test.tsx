@@ -91,10 +91,18 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+/** v6.4（需求 2）：计划清单管理在「计划清单」分组下 —— 先点导航再断言 */
+const openSettingsGroup = (id: string) => {
+  const btn = document.querySelector(`[data-testid="iw-settings-nav-${id}"]`) as HTMLButtonElement | null;
+  expect(btn).not.toBeNull();
+  fireEvent.click(btn!);
+};
+
 describe('v6.2 · 设置页计划清单管理', () => {
   it('空态提示 + 新建清单调用 createPlanList（名称 trim 后传入）', () => {
     holder.plans = [];
     render(<SettingsView />);
+    openSettingsGroup('plans');
     expect(screen.getByTestId('iw-plans-admin').textContent).toContain('还没有计划清单');
     const input = screen.getByTestId('iw-new-plan-name') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '  2026 春季  ' } });
@@ -105,6 +113,7 @@ describe('v6.2 · 设置页计划清单管理', () => {
   it('空名不触发新建', () => {
     holder.plans = [];
     render(<SettingsView />);
+    openSettingsGroup('plans');
     fireEvent.change(screen.getByTestId('iw-new-plan-name'), { target: { value: '   ' } });
     fireEvent.click(screen.getByTestId('iw-new-plan-submit'));
     expect(holder.createPlanList).not.toHaveBeenCalled();
@@ -113,6 +122,7 @@ describe('v6.2 · 设置页计划清单管理', () => {
   it('清单列表展示名称与成员数；重命名弹窗保存回调 renamePlanList', () => {
     holder.plans = [plan('p1', '2026 春季', [7, 9]), plan('p2', '给宝宝做的')];
     render(<SettingsView />);
+    openSettingsGroup('plans');
     expect(screen.getByText(/2026 春季/)).toBeTruthy();
     expect(screen.getByText(/（2 条）/)).toBeTruthy();
     expect(screen.getByText(/（0 条）/)).toBeTruthy();
@@ -128,6 +138,7 @@ describe('v6.2 · 设置页计划清单管理', () => {
   it('删除弹窗文案说明只解除关联不删记录；确认回调 deletePlanList', () => {
     holder.plans = [plan('p1', '2026 春季', [7])];
     render(<SettingsView />);
+    openSettingsGroup('plans');
     fireEvent.click(screen.getByTestId('iw-plan-delete-p1'));
     const hint = screen.getByTestId('iw-delete-plan-hint').textContent ?? '';
     expect(hint).toContain('2026 春季');
@@ -231,5 +242,25 @@ describe('v6.2 · 筛选面板按计划清单筛选', () => {
     );
     openPanel();
     expect(screen.getByText(/还没有计划清单/)).toBeTruthy();
+  });
+
+  it('v6.4 · 需求 7：筛选面板不再出现「推荐」「计划」筛选项（计划清单保留）', () => {
+    render(
+      <FilterPanel
+        {...baseProps}
+        filters={{ ...EMPTY_FILTERS }}
+        onChange={() => {}}
+        onClear={() => {}}
+        plans={[{ id: 'p1', name: '2026 春季' }]}
+      />,
+    );
+    openPanel();
+    const names = screen
+      .getAllByRole('button')
+      .map((b) => (b as HTMLButtonElement).getAttribute('aria-label') ?? b.textContent ?? '');
+    expect(names.some((n) => n.includes('推荐'))).toBe(false);
+    // 「计划」只允许以「计划清单」形式出现
+    expect(names.some((n) => n.includes('计划') && !n.includes('计划清单'))).toBe(false);
+    expect(names.some((n) => n.includes('计划清单'))).toBe(true);
   });
 });

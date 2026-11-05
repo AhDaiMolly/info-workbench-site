@@ -283,8 +283,6 @@ export function sortRecords(records: RecordItem[], sort: SortSpec): RecordItem[]
 export interface Stats {
   total: number;
   做过: number;
-  /** v6.1（需求 2）：原「想做」KPI 改为「计划」（取值 = 在计划中 的记录数） */
-  计划: number;
   brand: Array<{ name: string; value: number }>;
   brandOther: number;
   category: Array<{ name: string; value: number }>;
@@ -294,7 +292,6 @@ export interface Stats {
   season: Array<{ name: string; value: number }>;
   seasonBlank: number;
   ownership: Array<{ name: string; value: number }>;
-  completion: Array<{ name: string; value: number }>;
 }
 
 function tallyBy(values: string[]): Map<string, number> {
@@ -346,15 +343,9 @@ export function computeStats(records: RecordItem[]): Stats {
     { name: '双有', value: records.filter((r) => ownsE(r) && ownsP(r)).length },
   ];
 
-  const completionMap = tallyBy(records.map((r) => r.计划 ?? ''));
-  const completion = ['在计划中', '不是现在', '不想做', '未标记']
-    .filter((k) => completionMap.has(k))
-    .map((name) => ({ name, value: completionMap.get(name) ?? 0 }));
-
   return {
     total: records.length,
     做过: records.filter((r) => r.做过).length,
-    计划: records.filter((r) => r.计划 === '在计划中').length,
     brand,
     brandOther,
     category,
@@ -364,7 +355,6 @@ export function computeStats(records: RecordItem[]): Stats {
     season,
     seasonBlank,
     ownership,
-    completion,
   };
 }
 
