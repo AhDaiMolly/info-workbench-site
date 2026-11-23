@@ -6,9 +6,13 @@
  *   2. 清单以模块形式排列，每两个平铺一行（两列栅格）；
  *   3. 模块内直接列出清单里的记录；
  *   4. 右上角「新增清单」→ 弹层内可搜索 / 按分类、季节筛选并挑选记录 → 创建时带上初始成员；
- *   5. 每个模块右上角「编辑」「删除」：编辑进清单管理页，删除二次确认且只解除关联；
+ *   5. 每个模块右上角「删除」（v6.8 移除「编辑」入口）：删除二次确认且只解除关联；
  *   6. 清单之间可拖拽调整顺序；
  *   7. 清单内记录可拖拽调整顺序。
+ *
+ * v6.8 增补：
+ *   8. 模块无「编辑」入口；清单名后有编辑图标，点击只重命名该清单；
+ *   9. 模块内条目可「移出清单」——右键菜单 + 悬停「×」两个入口，只改成员关系。
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -223,11 +227,12 @@ describe('v6.7 · 新增清单（弹层内筛选并挑选记录）', () => {
   });
 });
 
-describe('v6.7 · 模块右上角的编辑 / 删除', () => {
-  it('点「编辑」跳到该清单的管理页', () => {
+describe('v6.7 · 模块右上角的删除（v6.8 移除「编辑」入口）', () => {
+  it('模块没有「编辑」入口（iw-plan-edit-* 不渲染）', () => {
     render(<PlansBoardView />);
-    fireEvent.click(screen.getByTestId('iw-plan-edit-p1'));
-    expect(holder.navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'plan', planId: 'p1' }));
+    expect(screen.queryByTestId('iw-plan-edit-p1')).toBeNull();
+    expect(screen.queryByTestId('iw-plan-edit-p2')).toBeNull();
+    expect(document.body.textContent ?? '').not.toContain('编辑');
   });
 
   it('点「删除」弹二次确认，文案说明只解除关联；确认后回调 deletePlanList', () => {
@@ -276,5 +281,55 @@ describe('v6.7 · 拖拽排序', () => {
     fireEvent.dragOver(row);
     fireEvent.drop(row);
     expect(holder.reorderPlanMembers).not.toHaveBeenCalled();
+  });
+});
+
+describe('v6.8 · 清单名后的编辑图标（只重命名）', () => {
+  it('清单名后渲染编辑图标，点击弹重命名弹层，保存回调 renamePlanList', () => {
+    render(<PlansBoardView />);
+    const icon = screen.getByTestId('iw-plan-card-rename-p1');
+    expect(icon.getAttribute('aria-label')).toBe('重命名清单：2026 春季');
+    fireEvent.click(icon);
+    const input = screen.getByTestId('iw-plan-card-rename-input') as HTMLInputElement;
+    expect(input.value).toBe('2026 春季');
+    fireEvent.change(input, { target: { value: ' 2026 春夏 ' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    expect(holder.renamePlanList).toHaveBeenCalledWith('p1', '2026 春夏');
+  });
+
+  it('重命名弹层取消 → 不改名称', () => {
+    render(<PlansBoardView />);
+    fireEvent.click(screen.getByTestId('iw-plan-card-rename-p1'));
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(holder.renamePlanList).not.toHaveBeenCalled();
+  });
+});
+
+describe('v6.8 · 条目移出清单（右键菜单 + 悬停 ×）', () => {
+  it('条目右键 → 弹出菜单含「移出清单」；点它回调 toggleRecordInPlan 且不跳详情页', () => {
+    render(<PlansBoardView />);
+    const row = screen.getByTestId('iw-plan-card-row-p1-1');
+    fireEvent.contextMenu(row);
+    expect(screen.getByTestId('iw-plan-ctx-menu')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('iw-plan-ctx-remove'));
+    expect(holder.toggleRecordInPlan).toHaveBeenCalledWith('p1', 1);
+    expect(holder.navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('右键菜单点遮罩关闭，不触发移出', () => {
+    render(<PlansBoardView />);
+    fireEvent.contextMenu(screen.getByTestId('iw-plan-card-row-p1-1'));
+    fireEvent.click(screen.getByTestId('iw-plan-ctx-overlay'));
+    expect(screen.queryByTestId('iw-plan-ctx-menu')).toBeNull();
+    expect(holder.toggleRecordInPlan).not.toHaveBeenCalled();
+  });
+
+  it('条目悬停「×」按钮 → 回调 toggleRecordInPlan 且不触发条目点击（跳详情）', () => {
+    render(<PlansBoardView />);
+    const x = screen.getByTestId('iw-plan-card-remove-p1-2');
+    expect(x.getAttribute('aria-label')).toBe('移出清单：百褶裙');
+    fireEvent.click(x);
+    expect(holder.toggleRecordInPlan).toHaveBeenCalledWith('p1', 2);
+    expect(holder.navigateMock).not.toHaveBeenCalled();
   });
 });

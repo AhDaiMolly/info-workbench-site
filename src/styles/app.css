@@ -379,8 +379,6 @@
   vertical-align: bottom;
 }
 
-.iw-table tbody tr.iw-row-incomplete { background: var(--iw-row-incomplete); }
-.iw-table tbody tr.iw-row-incomplete:hover { background: var(--iw-row-incomplete-hover); }
 .iw-table tbody tr.iw-row-noformat { background: var(--iw-row-noformat); }
 .iw-table tbody tr.iw-row-noformat:hover { background: var(--iw-row-noformat-hover); }
 
@@ -722,6 +720,32 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .iw-plan-member-brand { color: var(--iw-text-3, #94a3b8); font-size: 12px; flex: 0 0 auto; }
+/* v6.8（需求 2）：条目悬停可见的「×」移出入口 —— 平时隐藏但保持可点击（兼顾触屏） */
+.iw-plan-member-x {
+  flex: 0 0 auto; align-self: center; border: none; background: none; cursor: pointer;
+  color: var(--iw-text-3, #94a3b8); font-size: 15px; line-height: 1;
+  padding: 2px 6px; border-radius: 4px; opacity: 0.15;
+}
+.iw-plan-member:hover .iw-plan-member-x, .iw-plan-member-x:focus-visible { opacity: 1; }
+.iw-plan-member-x:hover { color: var(--iw-danger, #dc2626); background: var(--iw-surface-2, #f8fafc); }
+/* v6.8（需求 4）：清单名后的重命名图标按钮 */
+.iw-plan-card-rename { flex: 0 0 auto; padding: 0 4px; color: var(--iw-text-3, #94a3b8); }
+.iw-plan-card-rename:hover { color: var(--iw-primary, #2563eb); }
+/* v6.8（需求 2）：条目右键菜单 —— 「移出清单」 */
+.iw-plan-ctx-overlay {
+  position: fixed; inset: 0; z-index: 40; background: transparent;
+}
+.iw-plan-ctx-menu {
+  position: fixed; z-index: 50; min-width: 128px; padding: 4px;
+  background: var(--iw-surface, #fff); border: 1px solid var(--iw-border, #e5e7eb);
+  border-radius: 8px; box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+}
+.iw-plan-ctx-menu button {
+  display: block; width: 100%; padding: 6px 10px; border: none; background: none;
+  cursor: pointer; text-align: left; font-size: 13px; color: var(--iw-danger, #dc2626);
+  border-radius: 6px;
+}
+.iw-plan-ctx-menu button:hover { background: var(--iw-surface-2, #f8fafc); }
 .iw-plan-picker {
   max-height: 260px; overflow-y: auto;
   border: 1px solid var(--iw-border, #e5e7eb); border-radius: 6px; padding: 6px;

@@ -98,12 +98,13 @@ describe('v6 · 需求 1 设置页版本信息（v6.4 起在「版本信息」�
   });
 });
 
-describe('v6.4 · 需求 2 设置页二级导航（分组菜单）', () => {
-  it('渲染 5 个分组导航：连接与同步 / 数据管理 / 计划清单 / 字段选项 / 版本信息', () => {
+describe('v6.4 · 需求 2 设置页二级导航（分组菜单，v6.8 起移除「计划清单」分组）', () => {
+  it('渲染 4 个分组导航：连接与同步 / 数据管理 / 字段选项 / 版本信息（无计划清单）', () => {
     render(<SettingsView />);
     const labels = Array.from(document.querySelectorAll('[data-testid^="iw-settings-nav-"]'))
       .map((el) => el.textContent);
-    expect(labels).toEqual(['连接与同步', '数据管理', '计划清单', '字段选项', '版本信息']);
+    expect(labels).toEqual(['连接与同步', '数据管理', '字段选项', '版本信息']);
+    expect(document.querySelector('[data-testid="iw-settings-nav-plans"]')).toBeNull();
   });
 
   it('默认分组为「连接与同步」：展示数据仓库连接与同步和备份，其它分组卡片不渲染', () => {
@@ -115,20 +116,17 @@ describe('v6.4 · 需求 2 设置页二级导航（分组菜单）', () => {
     expect(container.textContent).not.toContain('版本号');
   });
 
-  it('每个分组点开后可达且互斥：数据管理 / 计划清单 / 字段选项 / 版本信息', () => {
+  it('每个分组点开后可达且互斥：数据管理 / 字段选项 / 版本信息；全页无计划清单管理区', () => {
     const { container } = render(<SettingsView />);
 
     openSettingsGroup('data');
     expect(container.textContent).toContain('导出全部 JSON');
     expect(container.textContent).not.toContain('数据仓库连接');
-
-    openSettingsGroup('plans');
-    expect(container.textContent).toContain('新建清单');
-    expect(container.textContent).not.toContain('导出全部 JSON');
+    expect(container.textContent).not.toContain('新建清单');
 
     openSettingsGroup('options');
     expect(container.textContent).toContain('字段选项管理');
-    expect(container.textContent).not.toContain('新建清单');
+    expect(container.textContent).not.toContain('导出全部 JSON');
 
     openSettingsGroup('version');
     expect(container.textContent).toContain('版本号');
@@ -137,6 +135,10 @@ describe('v6.4 · 需求 2 设置页二级导航（分组菜单）', () => {
     openSettingsGroup('connection');
     expect(container.textContent).toContain('数据仓库连接');
     expect(container.textContent).not.toContain('版本号');
+
+    // v6.8（需求 1）：设置页不再有计划清单模块
+    expect(document.querySelector('[data-testid="iw-plans-admin"]')).toBeNull();
+    expect(container.textContent).not.toContain('计划清单管理');
   });
 });
 

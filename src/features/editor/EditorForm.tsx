@@ -445,10 +445,10 @@ export function EditorForm({ recordId }: { recordId: number | null }) {
               <button
                 className="iw-btn iw-btn-sm"
                 type="button"
-                data-testid="iw-form-plan-goto-settings"
-                onClick={() => navigate({ view: 'settings', filters, query, sort })}
+                data-testid="iw-form-plan-goto-plans"
+                onClick={() => navigate({ view: 'plans', filters, query, sort })}
               >
-                去设置页创建清单
+                去清单页签创建清单
               </button>
             </div>
           )}

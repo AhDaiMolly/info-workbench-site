@@ -6,9 +6,14 @@
  *   · 需求 2：清单以模块形式依次排列，每两个清单平铺占一行
  *   · 需求 3：模块内直接列出清单里的记录
  *   · 需求 4：页签右上角「新增清单」，弹层里可像列表页一样筛选并挑选记录
- *   · 需求 5：每个模块右上角「编辑」「删除」
+ *   · 需求 5：每个模块右上角「删除」（v6.8 移除「编辑」入口）
  *   · 需求 6：清单之间可拖拽调整排列顺序
  *   · 需求 7：清单内的记录可拖拽调整顺序
+ *
+ * v6.8 变更：
+ *   · 需求 2：模块内条目支持「移出清单」——右键菜单 + 悬停 × 按钮两个入口（只改成员关系）
+ *   · 需求 3：移除模块右上角「编辑」入口（删除保留，仍二次确认）
+ *   · 需求 4：清单名称后加编辑图标，点击只允许重命名该清单
  *
  * 所有写操作都只改 plans.json（清单与成员关系），绝不删除 / 修改记录本身。
  */
@@ -56,6 +61,12 @@ export function PlansBoardView() {
 
   /* 删除确认状态 */
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  /* v6.8（需求 4）：重命名清单目标 —— 清单名后的编辑图标只做重命名 */
+  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
+
+  /* v6.8（需求 2）：条目右键菜单（移出清单） */
+  const [ctxMenu, setCtxMenu] = useState<{ planId: string; recordId: number; x: number; y: number } | null>(null);
 
   /* 拖拽状态 */
   const [dragPlanId, setDragPlanId] = useState<string | null>(null);
@@ -220,16 +231,20 @@ export function PlansBoardView() {
                   <h2 className="iw-plan-card-title" data-testid={`iw-plan-card-title-${plan.id}`}>
                     {plan.名称}
                   </h2>
+                  {/* v6.8（需求 4）：清单名后的编辑图标 —— 只允许重命名该清单 */}
+                  <button
+                    className="iw-btn iw-btn-sm iw-btn-ghost iw-plan-card-rename"
+                    type="button"
+                    data-testid={`iw-plan-card-rename-${plan.id}`}
+                    aria-label={`重命名清单：${plan.名称}`}
+                    title={`重命名清单：${plan.名称}`}
+                    onClick={() => setRenameTarget({ id: plan.id, name: plan.名称 })}
+                  >
+                    ✎
+                  </button>
                   <span className="iw-plan-card-count">{members.length} 条</span>
                   <span className="iw-plan-card-actions">
-                    <button
-                      className="iw-btn iw-btn-sm iw-btn-ghost"
-                      type="button"
-                      data-testid={`iw-plan-edit-${plan.id}`}
-                      onClick={() => navigate({ view: 'plan', planId: plan.id, filters: app.filters, query: app.query, sort: app.sort })}
-                    >
-                      编辑
-                    </button>
+                    {/* v6.8（需求 3）：移除「编辑」入口，仅保留「删除」（二次确认，只解除关联） */}
                     <button
                       className="iw-btn iw-btn-sm iw-btn-ghost"
                       type="button"
@@ -256,7 +271,7 @@ export function PlansBoardView() {
                 >
                   {members.length === 0 ? (
                     <div className="iw-field-hint" data-testid={`iw-plan-card-empty-${plan.id}`}>
-                      空清单 · 点「编辑」添加记录
+                      空清单 · 在列表筛选面板勾选本清单后点「管理清单…」可添加记录
                     </div>
                   ) : (
                     <ul className="iw-plan-members" data-testid={`iw-plan-card-members-${plan.id}`}>
@@ -284,10 +299,29 @@ export function PlansBoardView() {
                               onMemberDrop(plan.id, r.id);
                             }}
                             onClick={() => navigate({ view: 'detail', id: r.id, filters: app.filters, query: app.query, sort: app.sort })}
+                            onContextMenu={(e) => {
+                              // v6.8（需求 2）：条目右键菜单含「移出清单」
+                              e.preventDefault();
+                              setCtxMenu({ planId: plan.id, recordId: r.id, x: e.clientX, y: e.clientY });
+                            }}
                           >
                             <span className="iw-plan-member-id">#{r.id}</span>
                             <span className="iw-plan-member-name">{String(r.名称 ?? '')}</span>
                             <span className="iw-plan-member-brand">{String(r.品牌 ?? '')}</span>
+                            {/* v6.8（需求 2）：悬停可见的「×」移出入口（兼顾移动端无右键场景） */}
+                            <button
+                              className="iw-plan-member-x"
+                              type="button"
+                              data-testid={`iw-plan-card-remove-${plan.id}-${r.id}`}
+                              aria-label={`移出清单：${String(r.名称 ?? '')}`}
+                              title={`移出清单：${String(r.名称 ?? '')}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                app.actions.toggleRecordInPlan(plan.id, r.id);
+                              }}
+                            >
+                              ×
+                            </button>
                           </li>
                         );
                       })}
@@ -449,6 +483,56 @@ export function PlansBoardView() {
             )}
           </div>
         </div>
+      </Modal>
+
+      {/* v6.8（需求 2）：条目右键菜单 —— 「移出清单」只改成员关系，不删除记录本身 */}
+      {ctxMenu ? (
+        <>
+          <div
+            className="iw-plan-ctx-overlay"
+            data-testid="iw-plan-ctx-overlay"
+            onClick={() => setCtxMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }}
+          />
+          <div className="iw-plan-ctx-menu" data-testid="iw-plan-ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="iw-plan-ctx-remove"
+              onClick={() => {
+                app.actions.toggleRecordInPlan(ctxMenu.planId, ctxMenu.recordId);
+                setCtxMenu(null);
+              }}
+            >
+              移出清单
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {/* v6.8（需求 4）：重命名清单 —— 清单名后编辑图标，只改名称不动成员关系 */}
+      <Modal
+        open={renameTarget !== null}
+        title="重命名清单"
+        confirmText="保存"
+        onConfirm={() => {
+          if (renameTarget) {
+            const name = renameTarget.name.trim();
+            if (name) app.actions.renamePlanList(renameTarget.id, name);
+          }
+          setRenameTarget(null);
+        }}
+        onCancel={() => setRenameTarget(null)}
+      >
+        <input
+          className="iw-input"
+          data-testid="iw-plan-card-rename-input"
+          value={renameTarget?.name ?? ''}
+          onChange={(e) =>
+            setRenameTarget((prev) => (prev ? { ...prev, name: e.target.value } : prev))
+          }
+        />
+        <div className="iw-field-hint">重命名只改清单名称，清单里的记录与顺序都不受影响。</div>
       </Modal>
 
       {/* 删除清单：二次确认，只解除成员关联 */}

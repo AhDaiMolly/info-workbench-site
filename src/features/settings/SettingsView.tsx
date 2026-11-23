@@ -13,43 +13,35 @@ import { useApp } from '../../store/store';
 import { findShellRecords } from '../../store/migrations';
 import { Modal } from '../../components/Modal';
 import { BUILD_INFO, buildInfoText, buildDateText } from '../../version';
-import { navigate } from '../../router';
 import { SIZE_MANAGED_KEYS } from '../../store/options';
 
 /** v6.4（需求 2）：设置页二级导航分组 —— 设置项按类别归组，点导航只渲染当前分组的卡片。
- *  连接与同步 = 数据仓库连接 + 同步和备份；数据管理 = 导出 / 数据体检 / 待确认清单。 */
-type SettingsGroupId = 'connection' | 'data' | 'plans' | 'options' | 'version';
+ *  连接与同步 = 数据仓库连接 + 同步和备份；数据管理 = 导出 / 数据体检 / 待确认清单。
+ *  v6.8（需求 1）：「计划清单」分组整个移除 —— 清单配置功能集中到「清单」一级页签（#/plans）。 */
+type SettingsGroupId = 'connection' | 'data' | 'options' | 'version';
 
 const SETTINGS_GROUPS: Array<{ id: SettingsGroupId; label: string }> = [
   { id: 'connection', label: '连接与同步' },
   { id: 'data', label: '数据管理' },
-  { id: 'plans', label: '计划清单' },
   { id: 'options', label: '字段选项' },
   { id: 'version', label: '版本信息' },
 ];
 
-export function SettingsView({ initialGroup }: { initialGroup?: SettingsGroupId } = {}) {
+export function SettingsView() {
   const app = useApp();
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
   const [token, setToken] = useState('');
   const [sessionOnly, setSessionOnly] = useState(false);
   const [busy, setBusy] = useState(false);
-  /* v6.2（需求 1）：计划清单管理 —— 新建 / 重命名 / 删除（删除需确认） */
-  const [newPlanName, setNewPlanName] = useState('');
-  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; count: number } | null>(null);
   // v6.5（需求 2/3）：各字段的新增选项草稿（按字段 jsonKey 分开）
   const [optionDrafts, setOptionDrafts] = useState<Record<string, string>>({});
   // v6.3（需求 2）：字段选项管理的删除确认目标
   const [optionDeleteTarget, setOptionDeleteTarget] = useState<{
     fieldKey: string; fieldLabel: string; value: string; usage: number;
   } | null>(null);
-  // v6.4（需求 2）：设置二级导航当前分组；v6.6：支持 /settings/<组名> 锚点直达（如列表筛选面板的「管理清单」入口）
-  const [activeGroup, setActiveGroup] = useState<SettingsGroupId>(initialGroup ?? 'connection');
-  useEffect(() => {
-    if (initialGroup) setActiveGroup(initialGroup);
-  }, [initialGroup]);
+  // v6.4（需求 2）：设置二级导航当前分组
+  const [activeGroup, setActiveGroup] = useState<SettingsGroupId>('connection');
 
   useEffect(() => {
     if (app.config) {
@@ -338,80 +330,6 @@ export function SettingsView({ initialGroup }: { initialGroup?: SettingsGroupId 
       </div>
       ) : null}
 
-      {activeGroup === 'plans' ? (
-      <div className="iw-settings-card">
-        <h2 className="iw-settings-title">计划清单</h2>
-        <div className="iw-chip-group" data-testid="iw-plans-admin">
-          {app.plans.length === 0 ? (
-            <div className="iw-field-hint">还没有计划清单。创建后可在新增/编辑表单或记录详情页把记录加入清单，列表页也能按清单筛选。</div>
-          ) : (
-            app.plans.map((plan) => (
-              <div className="iw-plan-row" key={plan.id} data-testid="iw-plan-row">
-                <span className="iw-plan-name">
-                  {plan.名称}
-                  <span className="iw-plan-count">（{plan.记录ID列表.length} 条）</span>
-                </span>
-                <button
-                  type="button"
-                  className="iw-btn iw-btn-ghost"
-                  data-testid={`iw-plan-manage-${plan.id}`}
-                  aria-label={`管理清单成员：${plan.名称}`}
-                  onClick={() => navigate({ view: 'plan', planId: plan.id })}
-                >
-                  管理
-                </button>
-                <button
-                  type="button"
-                  className="iw-btn iw-btn-ghost"
-                  data-testid={`iw-plan-rename-${plan.id}`}
-                  aria-label={`重命名清单：${plan.名称}`}
-                  onClick={() => setRenameTarget({ id: plan.id, name: plan.名称 })}
-                >
-                  重命名
-                </button>
-                <button
-                  type="button"
-                  className="iw-btn iw-btn-ghost"
-                  data-testid={`iw-plan-delete-${plan.id}`}
-                  aria-label={`删除清单：${plan.名称}`}
-                  onClick={() =>
-                    setDeleteTarget({ id: plan.id, name: plan.名称, count: plan.记录ID列表.length })
-                  }
-                >
-                  删除
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-        <div className="iw-inline-form">
-          <input
-            className="iw-input"
-            data-testid="iw-new-plan-name"
-            value={newPlanName}
-            placeholder="新清单名称（如：2026 春季）"
-            onChange={(e) => setNewPlanName(e.target.value)}
-          />
-          <button
-            type="button"
-            className="iw-btn iw-btn-primary"
-            data-testid="iw-new-plan-submit"
-            onClick={() => {
-              const name = newPlanName.trim();
-              if (!name) return;
-              const created = app.actions.createPlanList(name);
-              if (created) setNewPlanName('');
-            }}
-          >
-            新建清单
-          </button>
-        </div>
-        <div className="iw-field-hint">
-          计划清单用于把记录归入自定义分组（一条记录可属于多份清单），与「状态及评价」里的「计划」状态互不影响。删除清单只解除记录关联，不删除记录本身。
-        </div>
-      </div>
-      ) : null}
-
       {activeGroup === 'options' ? (
       <div className="iw-settings-card">
         <h2 className="iw-settings-title">字段选项管理</h2>
@@ -577,45 +495,6 @@ export function SettingsView({ initialGroup }: { initialGroup?: SettingsGroupId 
       </div>
       ) : null}
 
-      {/* v6.2（需求 1）：重命名 / 删除确认弹窗 */}
-      <Modal
-        open={renameTarget !== null}
-        title="重命名计划清单"
-        confirmText="保存"
-        onConfirm={() => {
-          if (renameTarget) {
-            const name = renameTarget.name.trim();
-            if (name) app.actions.renamePlanList(renameTarget.id, name);
-          }
-          setRenameTarget(null);
-        }}
-        onCancel={() => setRenameTarget(null)}
-      >
-        <input
-          className="iw-input"
-          data-testid="iw-rename-plan-input"
-          value={renameTarget?.name ?? ''}
-          onChange={(e) =>
-            setRenameTarget((prev) => (prev ? { ...prev, name: e.target.value } : prev))
-          }
-        />
-      </Modal>
-      <Modal
-        open={deleteTarget !== null}
-        title="删除计划清单"
-        confirmText="删除"
-        danger
-        onConfirm={() => {
-          if (deleteTarget) app.actions.deletePlanList(deleteTarget.id);
-          setDeleteTarget(null);
-        }}
-        onCancel={() => setDeleteTarget(null)}
-      >
-        <div className="iw-field-hint" data-testid="iw-delete-plan-hint">
-          确定删除「{deleteTarget?.name}」吗？清单里有 {deleteTarget?.count ?? 0}{' '}
-          条记录；删除清单只解除记录关联，不会删除任何记录本身。
-        </div>
-      </Modal>
       <Modal
         open={optionDeleteTarget !== null}
         title="删除字段选项"

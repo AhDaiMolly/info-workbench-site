@@ -148,24 +148,23 @@ describe('v6.5（需求 9）：列表「电子 / 纸质」两列', () => {
   });
 });
 
-describe('v6.5（需求 8）：行标注色', () => {
-  it('信息不全的行是浅灰（iw-row-incomplete）', () => {
+describe('行标注色（v6.8 单规则：不在任何清单 → 浅黄，其余不填色）', () => {
+  it('不在任何清单中的行是浅黄（iw-row-noformat）—— 信息是否齐全不再参与', () => {
     stateHolder.query = '';
     const { container } = render(<ListView />);
     const row = rowByName(container, '信息不全的记录');
-    expect(row.className).toContain('iw-row-incomplete');
-    expect(row.className).not.toContain('iw-row-noformat');
-  });
-
-  it('信息齐全但没有拥有形态的行是浅黄（iw-row-noformat）', () => {
-    stateHolder.query = '';
-    const { container } = render(<ListView />);
-    const row = rowByName(container, '齐全但无形态');
     expect(row.className).toContain('iw-row-noformat');
     expect(row.className).not.toContain('iw-row-incomplete');
   });
 
-  it('信息齐全且有形态的行没有标注色', () => {
+  it('不在任何清单、信息齐全无形态的行也是浅黄', () => {
+    stateHolder.query = '';
+    const { container } = render(<ListView />);
+    const row = rowByName(container, '齐全但无形态');
+    expect(row.className).toContain('iw-row-noformat');
+  });
+
+  it('在清单里的行没有标注色（无论信息齐全与否）', () => {
     stateHolder.query = '';
     const { container } = render(<ListView />);
     const row = rowByName(container, '896文艺套装-上衣');

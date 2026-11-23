@@ -224,7 +224,7 @@ export function FilterPanel(props: Props) {
                       </button>
                     );
                   })}
-                  {/* v6.6（需求 1）：清单管理入口 —— 选中某份清单时直达该清单管理页，否则去设置页清单组 */}
+                  {/* v6.8（需求 1）：清单管理入口 —— 选中某份清单时直达该清单管理页，否则去「清单」一级页签 */}
                   <button
                     type="button"
                     className="iw-chip"
@@ -232,7 +232,7 @@ export function FilterPanel(props: Props) {
                     onClick={() => {
                       const list = (filters.计划清单 as string[]) ?? [];
                       if (list.length === 1) navigate({ view: 'plan', planId: list[0] });
-                      else navigate({ view: 'settings', settingsTab: 'plans' });
+                      else navigate({ view: 'plans' });
                     }}
                   >
                     ⚙ 管理清单…
@@ -240,13 +240,13 @@ export function FilterPanel(props: Props) {
                 </div>
               ) : (
                 <div className="iw-cell-muted">
-                  还没有计划清单（可在「设置 › 计划清单」创建）
+                  还没有计划清单（可在「清单」页签创建）
                   <button
                     type="button"
                     className="iw-btn iw-btn-sm iw-btn-ghost"
                     style={{ marginLeft: 8 }}
                     data-testid="iw-filter-goto-plans"
-                    onClick={() => navigate({ view: 'settings', settingsTab: 'plans' })}
+                    onClick={() => navigate({ view: 'plans' })}
                   >
                     去创建
                   </button>

@@ -1,27 +1,17 @@
 /**
- * v6.5（需求 8 / 9）：列表行标注色与「电子 / 纸质」两列标记
+ * v6.5（需求 9）：「电子 / 纸质」两列标记 + 行标注色纯函数（v6.8 单规则口径）
  */
 
 import { describe, expect, it } from 'vitest';
 import { formatMarkIcon, rowAnnotation } from '../features/list/derivedCells';
 
-describe('v6.5（需求 8）：行标注色 —— 灰优先于黄，两规则互不叠加', () => {
-  it('分类 / 款式 / 季节任一为空 → 浅灰（incomplete）', () => {
-    expect(rowAnnotation({ 分类: [], 款式: '外套', 季节: '夏' })).toBe('incomplete');
-    expect(rowAnnotation({ 分类: ['女装'], 款式: '', 季节: '夏' })).toBe('incomplete');
-    expect(rowAnnotation({ 分类: ['女装'], 款式: '外套', 季节: '' })).toBe('incomplete');
+describe('行标注色（v6.8 单规则：不在任何清单 → 浅黄，其余不填色）', () => {
+  it('不在任何清单 → 浅黄（noformat）—— 分类 / 款式 / 季节 / 拥有形态不再参与', () => {
+    expect(rowAnnotation(false)).toBe('noformat');
   });
 
-  it('三者齐全但拥有形态为空 → 浅黄（noformat）', () => {
-    expect(rowAnnotation({ 分类: ['女装'], 款式: '外套', 季节: '夏', 拥有形态: [] })).toBe('noformat');
-  });
-
-  it('两者都满足时灰优先于黄（只返回 incomplete）', () => {
-    expect(rowAnnotation({ 分类: [], 款式: '', 季节: '', 拥有形态: [] })).toBe('incomplete');
-  });
-
-  it('信息齐全且有拥有形态 → 无标注', () => {
-    expect(rowAnnotation({ 分类: ['女装'], 款式: '外套', 季节: '夏', 拥有形态: ['电子版'] })).toBeNull();
+  it('在清单里 → 无标注色（即使信息不齐全或无拥有形态）', () => {
+    expect(rowAnnotation(true)).toBeNull();
   });
 });
 

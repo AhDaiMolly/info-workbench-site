@@ -1,8 +1,8 @@
 /**
  * v6.2 · 需求 1 计划清单（界面级验证，jsdom）
  *
- * 行为合同：
- *   1. 设置页「计划清单」卡片：新建 / 重命名（弹窗）/ 删除（弹窗确认，文案说明只解除关联）；
+ * 行为合同（v6.8 更新）：
+ *   1. 设置页不再有「计划清单」模块（二级导航无该分组、全卡片无清单管理区）；
  *   2. 记录详情页「计划清单」卡片：chip 点选 = 加入/移出（回调带清单 ID 与记录 ID）；
  *   3. 列表筛选面板「计划清单」块：chip 点选触发筛选变更（OR 语义，value 为清单 ID）。
  */
@@ -91,61 +91,24 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-/** v6.4（需求 2）：计划清单管理在「计划清单」分组下 —— 先点导航再断言 */
+/** v6.4（需求 2）：点二级导航切组（v6.8 起仅 4 组）—— 先点导航再断言 */
 const openSettingsGroup = (id: string) => {
   const btn = document.querySelector(`[data-testid="iw-settings-nav-${id}"]`) as HTMLButtonElement | null;
   expect(btn).not.toBeNull();
   fireEvent.click(btn!);
 };
 
-describe('v6.2 · 设置页计划清单管理', () => {
-  it('空态提示 + 新建清单调用 createPlanList（名称 trim 后传入）', () => {
-    holder.plans = [];
-    render(<SettingsView />);
-    openSettingsGroup('plans');
-    expect(screen.getByTestId('iw-plans-admin').textContent).toContain('还没有计划清单');
-    const input = screen.getByTestId('iw-new-plan-name') as HTMLInputElement;
-    fireEvent.change(input, { target: { value: '  2026 春季  ' } });
-    fireEvent.click(screen.getByTestId('iw-new-plan-submit'));
-    expect(holder.createPlanList).toHaveBeenCalledWith('2026 春季');
-  });
-
-  it('空名不触发新建', () => {
-    holder.plans = [];
-    render(<SettingsView />);
-    openSettingsGroup('plans');
-    fireEvent.change(screen.getByTestId('iw-new-plan-name'), { target: { value: '   ' } });
-    fireEvent.click(screen.getByTestId('iw-new-plan-submit'));
-    expect(holder.createPlanList).not.toHaveBeenCalled();
-  });
-
-  it('清单列表展示名称与成员数；重命名弹窗保存回调 renamePlanList', () => {
-    holder.plans = [plan('p1', '2026 春季', [7, 9]), plan('p2', '给宝宝做的')];
-    render(<SettingsView />);
-    openSettingsGroup('plans');
-    expect(screen.getByText(/2026 春季/)).toBeTruthy();
-    expect(screen.getByText(/（2 条）/)).toBeTruthy();
-    expect(screen.getByText(/（0 条）/)).toBeTruthy();
-
-    fireEvent.click(screen.getByTestId('iw-plan-rename-p1'));
-    const dialog = screen.getByTestId('iw-rename-plan-input') as HTMLInputElement;
-    expect(dialog.value).toBe('2026 春季');
-    fireEvent.change(dialog, { target: { value: '2026 春夏' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-    expect(holder.renamePlanList).toHaveBeenCalledWith('p1', '2026 春夏');
-  });
-
-  it('删除弹窗文案说明只解除关联不删记录；确认回调 deletePlanList', () => {
+describe('v6.8 · 设置页不再有「计划清单」模块', () => {
+  it('二级导航没有「计划清单」分组；逐组点开都没有清单管理区/新建清单入口', () => {
     holder.plans = [plan('p1', '2026 春季', [7])];
     render(<SettingsView />);
-    openSettingsGroup('plans');
-    fireEvent.click(screen.getByTestId('iw-plan-delete-p1'));
-    const hint = screen.getByTestId('iw-delete-plan-hint').textContent ?? '';
-    expect(hint).toContain('2026 春季');
-    expect(hint).toContain('只解除记录关联');
-    expect(hint).toContain('不会删除任何记录本身');
-    fireEvent.click(screen.getByRole('button', { name: '删除' }));
-    expect(holder.deletePlanList).toHaveBeenCalledWith('p1');
+    expect(document.querySelector('[data-testid="iw-settings-nav-plans"]')).toBeNull();
+    for (const g of ['connection', 'data', 'options', 'version']) {
+      openSettingsGroup(g);
+      expect(document.querySelector('[data-testid="iw-plans-admin"]')).toBeNull();
+      expect(document.body.textContent ?? '').not.toContain('新建清单');
+      expect(document.body.textContent ?? '').not.toContain('管理清单成员');
+    }
   });
 });
 
@@ -168,12 +131,12 @@ describe('v6.2 · 详情页记录加入/移出清单', () => {
     expect(holder.toggleRecordInPlan).toHaveBeenCalledWith('p2', 7);
   });
 
-  it('没有任何清单时给出引导提示（指向设置页）', () => {
+  it('没有任何清单时给出引导提示（指向「清单」页签）', () => {
     holder.plans = [];
     render(<DetailView id={7} />);
     const card = screen.getByTestId('iw-plan-card');
     expect(card.textContent).toContain('还没有计划清单');
-    expect(card.textContent).toContain('设置');
+    expect(card.textContent).toContain('「清单」页签');
   });
 });
 
@@ -262,5 +225,66 @@ describe('v6.2 · 筛选面板按计划清单筛选', () => {
     // 「计划」只允许以「计划清单」形式出现
     expect(names.some((n) => n.includes('计划') && !n.includes('计划清单'))).toBe(false);
     expect(names.some((n) => n.includes('计划清单'))).toBe(true);
+  });
+});
+
+describe('v6.8 · 筛选面板清单入口不再依赖设置页', () => {
+  const baseProps = {
+    schema: DEFAULT_SCHEMA,
+    presets: [],
+    onApplyPreset: vi.fn(),
+    onSavePreset: vi.fn(),
+    onDeletePreset: vi.fn(),
+  };
+  const openPanel = () => {
+    fireEvent.click(screen.getByRole('button', { name: /^筛选条件/ }));
+  };
+
+  it('「管理清单…」未选中清单时跳「清单」一级页签（不是设置页）', () => {
+    render(
+      <FilterPanel
+        {...baseProps}
+        filters={{ ...EMPTY_FILTERS }}
+        onChange={() => {}}
+        onClear={() => {}}
+        plans={[{ id: 'p1', name: '2026 春季' }, { id: 'p2', name: '给宝宝做的' }]}
+      />,
+    );
+    openPanel();
+    fireEvent.click(screen.getByTestId('iw-filter-manage-plans'));
+    expect(holder.navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'plans' }));
+    const calls = holder.navigateMock.mock.calls.map((c) => c[0] as { view?: string });
+    expect(calls.every((c) => c.view !== 'settings')).toBe(true);
+  });
+
+  it('「管理清单…」恰好选中一份清单时进该清单管理页', () => {
+    render(
+      <FilterPanel
+        {...baseProps}
+        filters={{ ...EMPTY_FILTERS, 计划清单: ['p1'] } as Filters}
+        onChange={() => {}}
+        onClear={() => {}}
+        plans={[{ id: 'p1', name: '2026 春季' }]}
+      />,
+    );
+    openPanel();
+    fireEvent.click(screen.getByTestId('iw-filter-manage-plans'));
+    expect(holder.navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'plan', planId: 'p1' }));
+  });
+
+  it('没有清单时「去创建」跳「清单」一级页签', () => {
+    render(
+      <FilterPanel
+        {...baseProps}
+        filters={{ ...EMPTY_FILTERS }}
+        onChange={() => {}}
+        onClear={() => {}}
+        plans={[]}
+      />,
+    );
+    openPanel();
+    expect(screen.getByText(/还没有计划清单/)).toBeTruthy();
+    fireEvent.click(screen.getByTestId('iw-filter-goto-plans'));
+    expect(holder.navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'plans' }));
   });
 });

@@ -193,7 +193,9 @@ export function App() {
         {route.view === 'detail' ? <DetailView id={route.id} /> : null}
         {route.view === 'editor' ? <EditorForm recordId={route.id} /> : null}
         {route.view === 'dashboard' ? <DashboardView /> : null}
-        {route.view === 'settings' ? <SettingsView initialGroup={route.settingsTab === 'plans' ? 'plans' : undefined} /> : null}
+        {/* v6.8（需求 1）：设置页「计划清单」分组已移除；旧锚点 /settings/plans 兼容跳转到「清单」一级页签 */}
+        {route.view === 'settings' && route.settingsTab === 'plans' ? <PlansBoardView /> : null}
+        {route.view === 'settings' && route.settingsTab !== 'plans' ? <SettingsView /> : null}
         {/* v6.6（需求 1）：单个清单的管理视图（添加 / 移除只改成员关系） */}
         {route.view === 'plan' ? <PlanView planId={route.planId} /> : null}
         {/* v6.7（需求 1~7）：一级页签「清单」——清单模块两列平铺、可新增/编辑/删除、拖拽排序 */}

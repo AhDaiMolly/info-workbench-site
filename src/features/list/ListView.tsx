@@ -50,16 +50,12 @@ export function ListView() {
   };
 
   /**
-   * 行标注色（v6.5 需求 8；v6.6 纳入清单口径）：
-   * 分类/款式/季节任一空 → 灰；三者齐但拥有形态或清单空 → 黄；灰优先。
+   * 行标注色（v6.8 单规则）：不在任何清单中的记录 → 浅黄（iw-row-noformat），其余不填色。
    * hasPlan 取自 store 的 planMembers（记录 → 所在清单集合）。
    */
   const rowClass = (r: RecordItem): string | undefined => {
     const hasPlan = (app.planMembers?.get(r.id)?.size ?? 0) > 0;
-    const a = rowAnnotation(r, hasPlan);
-    if (a === 'incomplete') return 'iw-row-incomplete';
-    if (a === 'noformat') return 'iw-row-noformat';
-    return undefined;
+    return rowAnnotation(hasPlan) ? 'iw-row-noformat' : undefined;
   };
 
   const renderCell = (col: string, r: RecordItem) => {

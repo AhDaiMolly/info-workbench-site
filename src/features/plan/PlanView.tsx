@@ -73,8 +73,8 @@ export function PlanView({ planId }: { planId: string | null }) {
           <p className="iw-page-sub">找不到这份清单 —— 它可能刚被删除，或链接里的清单 ID 不对。</p>
         </div>
         <div className="iw-actions-row">
-          <button className="iw-btn" type="button" onClick={() => navigate({ view: 'settings', settingsTab: 'plans', filters: app.filters, query: app.query, sort: app.sort })}>
-            回设置页看清单
+          <button className="iw-btn" type="button" onClick={() => navigate({ view: 'plans', filters: app.filters, query: app.query, sort: app.sort })}>
+            回清单页
           </button>
           <button className="iw-btn iw-btn-primary" type="button" onClick={() => navigate({ view: 'list', filters: app.filters, query: app.query, sort: app.sort })}>
             返回列表
@@ -94,8 +94,8 @@ export function PlanView({ planId }: { planId: string | null }) {
           </p>
         </div>
         <div className="iw-actions-row">
-          <button className="iw-btn" type="button" onClick={() => navigate({ view: 'settings', settingsTab: 'plans', filters: app.filters, query: app.query, sort: app.sort })}>
-            返回设置
+          <button className="iw-btn" type="button" onClick={() => navigate({ view: 'plans', filters: app.filters, query: app.query, sort: app.sort })}>
+            返回清单页
           </button>
           <button
             className="iw-btn"

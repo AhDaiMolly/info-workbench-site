@@ -528,13 +528,13 @@ describe('v6.2.1 · 编辑表单里的计划清单（即时生效）', () => {
     expect(Object.keys(updateRecordMock.mock.calls[0][1])).not.toContain('计划清单');
   });
 
-  it('清单为空时给出引导与设置页跳转入口', () => {
+  it('清单为空时给出引导与「清单」页签跳转入口（v6.8：不再跳设置页）', () => {
     plansHolder.plans = [];
     const { container } = render(<EditorForm recordId={7} />);
     const block = container.querySelector('[data-testid="iw-form-plan-block"]') as HTMLElement;
     expect(block.textContent).toContain('还没有计划清单');
-    fireEvent.click(screen.getByTestId('iw-form-plan-goto-settings'));
-    expect(navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'settings' }));
+    fireEvent.click(screen.getByTestId('iw-form-plan-goto-plans'));
+    expect(navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'plans' }));
   });
 
   it('设置页重命名清单后，表单 chip 展示新名称（同一 store 事实源）', () => {
@@ -585,13 +585,13 @@ describe('v6.2.1 · 新增表单里的计划清单（保存后一并写入）', 
     expect(addRecordMock.mock.calls[0][1]).toEqual([]);
   });
 
-  it('清单为空时同样给出引导与跳转入口', () => {
+  it('清单为空时同样给出引导与「清单」页签跳转入口', () => {
     plansHolder.plans = [];
     render(<EditorForm recordId={null} />);
     const block = document.querySelector('[data-testid="iw-form-plan-block"]') as HTMLElement;
     expect(block.textContent).toContain('还没有计划清单');
-    fireEvent.click(screen.getByTestId('iw-form-plan-goto-settings'));
-    expect(navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'settings' }));
+    fireEvent.click(screen.getByTestId('iw-form-plan-goto-plans'));
+    expect(navigateMock).toHaveBeenCalledWith(expect.objectContaining({ view: 'plans' }));
   });
 
   it('表单与详情页共用同一 store 事实源：同一份 plans 两处回显一致', () => {
