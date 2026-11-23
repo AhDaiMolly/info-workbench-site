@@ -5,7 +5,6 @@
  *   · 需求 1：一级菜单新增「清单」页签
  *   · 需求 2：清单以模块形式依次排列，每两个清单平铺占一行
  *   · 需求 3：模块内直接列出清单里的记录
- *   · 需求 4：页签右上角「新增清单」，弹层里可像列表页一样筛选并挑选记录
  *   · 需求 5：每个模块右上角「删除」（v6.8 移除「编辑」入口）
  *   · 需求 6：清单之间可拖拽调整排列顺序
  *   · 需求 7：清单内的记录可拖拽调整顺序
@@ -14,6 +13,14 @@
  *   · 需求 2：模块内条目支持「移出清单」——右键菜单 + 悬停 × 按钮两个入口（只改成员关系）
  *   · 需求 3：移除模块右上角「编辑」入口（删除保留，仍二次确认）
  *   · 需求 4：清单名称后加编辑图标，点击只允许重命名该清单
+ *
+ * v6.9 变更：
+ *   · 需求 1：「新增清单」弹层简化为只填清单名称（新清单为空清单）
+ *   · 需求 2：每个清单模块新增「＋ 添加记录」入口，跳转 #/plan-add/:id
+ *     —— 与列表页同款布局的挑选页（搜索 / 筛选 / 多选 / 已在清单置灰）
+ *   · 需求 4：条目上提供「移出」按钮（右键菜单「移出清单」保留）
+ *   · 需求 5：条目右键菜单新增「加入其他清单…」—— 迁移语义（加入目标并从当前移出）
+ *   · 需求 6：移除 v6.8 的条目悬停「×」移除按钮（移出入口统一为右键菜单与「移出」按钮）
  *
  * 所有写操作都只改 plans.json（清单与成员关系），绝不删除 / 修改记录本身。
  */
@@ -24,40 +31,16 @@ import { navigate } from '../../router';
 import { Modal } from '../../components/Modal';
 import type { RecordItem } from '../../types';
 
-/** 挑选记录的列表最多直接渲染的条数（848+ 条全渲染会卡） */
-const PICK_LIMIT = 100;
-
-const COLLATOR = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' });
-
 function recLabel(r: RecordItem): string {
   return `#${r.id} ${String(r.名称 ?? '')}`;
 }
 
-function uniqValues(records: RecordItem[], key: '分类' | '季节' | '品牌' | '款式'): string[] {
-  const set = new Set<string>();
-  for (const r of records) {
-    const v = String(r[key] ?? '').trim();
-    if (v) set.add(v);
-  }
-  return [...set].sort(COLLATOR.compare);
-}
-
-/** 「拥有形态」是多选字段：筛选项固定为 电子版 / 纸质版 + 任意拥有（非空） */
-const OWN_OPTIONS = ['电子版', '纸质版', '任意拥有'] as const;
-
 export function PlansBoardView() {
   const app = useApp();
 
-  /* 新增清单弹层状态 */
+  /* 新增清单弹层状态（v6.9：只需名称） */
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState('');
-  const [pickQuery, setPickQuery] = useState('');
-  const [pickCats, setPickCats] = useState<string[]>([]);
-  const [pickSeasons, setPickSeasons] = useState<string[]>([]);
-  const [pickBrands, setPickBrands] = useState<string[]>([]);
-  const [pickStyles, setPickStyles] = useState<string[]>([]);
-  const [ownFilter, setOwnFilter] = useState<string[]>([]);
-  const [picked, setPicked] = useState<number[]>([]);
 
   /* 删除确认状态 */
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -65,8 +48,11 @@ export function PlansBoardView() {
   /* v6.8（需求 4）：重命名清单目标 —— 清单名后的编辑图标只做重命名 */
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
 
-  /* v6.8（需求 2）：条目右键菜单（移出清单） */
+  /* 条目右键菜单（v6.8：移出清单；v6.9：加入其他清单） */
   const [ctxMenu, setCtxMenu] = useState<{ planId: string; recordId: number; x: number; y: number } | null>(null);
+
+  /* v6.9（需求 5）：「加入其他清单」迁移弹层目标（来源清单 + 记录） */
+  const [moveTarget, setMoveTarget] = useState<{ fromPlanId: string; recordId: number } | null>(null);
 
   /* 拖拽状态 */
   const [dragPlanId, setDragPlanId] = useState<string | null>(null);
@@ -84,60 +70,6 @@ export function PlansBoardView() {
     () => app.plans.reduce((sum, p) => sum + p.记录ID列表.length, 0),
     [app.plans],
   );
-
-  /* ---------- 挑选记录：搜索 + 分类 / 款式 / 季节 / 品牌 / 拥有形态筛选（与列表页同类口径） ---------- */
-  const catOptions = useMemo(() => uniqValues(app.records, '分类'), [app.records]);
-  const seasonOptions = useMemo(() => uniqValues(app.records, '季节'), [app.records]);
-  const brandOptions = useMemo(() => uniqValues(app.records, '品牌'), [app.records]);
-  const styleOptions = useMemo(() => uniqValues(app.records, '款式'), [app.records]);
-
-  const pickCandidates = useMemo(() => {
-    const q = pickQuery.trim().toLowerCase();
-    const plain = q.replace(/^#/, '');
-    const isId = /^\d+$/.test(plain);
-    return app.records
-      .filter((r) => {
-        if (pickCats.length && !pickCats.includes(String(r.分类 ?? ''))) return false;
-        if (pickSeasons.length && !pickSeasons.includes(String(r.季节 ?? ''))) return false;
-        if (pickBrands.length && !pickBrands.includes(String(r.品牌 ?? ''))) return false;
-        if (pickStyles.length && !pickStyles.includes(String(r.款式 ?? ''))) return false;
-        if (ownFilter.length) {
-          const own = Array.isArray(r.拥有形态) ? r.拥有形态.map((x) => String(x ?? '')) : [];
-          // OR 语义：任一勾选项命中即可；「任意拥有」= 拥有形态非空
-          const hit = ownFilter.some((o) => (o === '任意拥有' ? own.length > 0 : own.includes(o)));
-          if (!hit) return false;
-        }
-        if (!q) return true;
-        if (isId && String(r.id).includes(plain)) return true;
-        if (String(r.名称 ?? '').toLowerCase().includes(q)) return true;
-        if (String(r.品牌 ?? '').toLowerCase().includes(q)) return true;
-        return false;
-      })
-      .sort((a, b) => COLLATOR.compare(String(a.名称 ?? ''), String(b.名称 ?? '')));
-  }, [app.records, pickQuery, pickCats, pickSeasons, pickBrands, pickStyles, ownFilter]);
-
-  const togglePick = (id: number) => {
-    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-
-  const closeNewModal = () => {
-    setNewOpen(false);
-    setNewName('');
-    setPickQuery('');
-    setPickCats([]);
-    setPickSeasons([]);
-    setPickBrands([]);
-    setPickStyles([]);
-    setOwnFilter([]);
-    setPicked([]);
-  };
-
-  const submitNewPlan = () => {
-    const name = newName.trim();
-    if (!name) return;
-    app.actions.createPlanList(name, picked);
-    closeNewModal();
-  };
 
   /* ---------- 拖拽：清单之间重排 ---------- */
   const onPlanDrop = (targetId: string) => {
@@ -172,7 +104,28 @@ export function PlansBoardView() {
     app.actions.reorderPlanMembers(planId, ids);
   };
 
+  const closeNewModal = () => {
+    setNewOpen(false);
+    setNewName('');
+  };
+
+  /* v6.9（需求 1）：新增清单只需名称，创建为空清单；成员经「＋ 添加记录」挑选页补充 */
+  const submitNewPlan = () => {
+    const name = newName.trim();
+    if (!name) return;
+    app.actions.createPlanList(name);
+    closeNewModal();
+  };
+
   const deletingPlan = app.plans.find((p) => p.id === deletingId) ?? null;
+
+  /* v6.9（需求 5）：迁移目标候选 —— 排除该记录已在的所有清单（含当前清单） */
+  const moveCandidates = useMemo(() => {
+    if (!moveTarget) return [];
+    const rec = recordById.get(moveTarget.recordId);
+    if (!rec) return [];
+    return app.plans.filter((p) => !p.记录ID列表.includes(moveTarget.recordId));
+  }, [moveTarget, app.plans, recordById]);
 
   return (
     <div data-testid="iw-plans-view">
@@ -198,7 +151,7 @@ export function PlansBoardView() {
       {app.plans.length === 0 ? (
         <div className="iw-settings-card">
           <div className="iw-field-hint" data-testid="iw-plans-empty">
-            还没有清单。点右上角「＋ 新增清单」建一份，然后在弹层里筛选并挑选记录。
+            还没有清单。点右上角「＋ 新增清单」建一份（只需名称），再在模块里点「＋ 添加记录」挑选记录。
           </div>
         </div>
       ) : (
@@ -244,6 +197,16 @@ export function PlansBoardView() {
                   </button>
                   <span className="iw-plan-card-count">{members.length} 条</span>
                   <span className="iw-plan-card-actions">
+                    {/* v6.9（需求 2）：模块「＋ 添加记录」—— 跳转与列表页同款布局的挑选页 */}
+                    <button
+                      className="iw-btn iw-btn-sm"
+                      type="button"
+                      data-testid={`iw-plan-card-add-${plan.id}`}
+                      title={`往「${plan.名称}」添加记录`}
+                      onClick={() => navigate({ view: 'plan-add', planId: plan.id })}
+                    >
+                      ＋ 添加记录
+                    </button>
                     {/* v6.8（需求 3）：移除「编辑」入口，仅保留「删除」（二次确认，只解除关联） */}
                     <button
                       className="iw-btn iw-btn-sm iw-btn-ghost"
@@ -271,7 +234,7 @@ export function PlansBoardView() {
                 >
                   {members.length === 0 ? (
                     <div className="iw-field-hint" data-testid={`iw-plan-card-empty-${plan.id}`}>
-                      空清单 · 在列表筛选面板勾选本清单后点「管理清单…」可添加记录
+                      空清单 · 点模块右上「＋ 添加记录」去挑选页批量加入
                     </div>
                   ) : (
                     <ul className="iw-plan-members" data-testid={`iw-plan-card-members-${plan.id}`}>
@@ -300,7 +263,7 @@ export function PlansBoardView() {
                             }}
                             onClick={() => navigate({ view: 'detail', id: r.id, filters: app.filters, query: app.query, sort: app.sort })}
                             onContextMenu={(e) => {
-                              // v6.8（需求 2）：条目右键菜单含「移出清单」
+                              // v6.8（需求 2）+ v6.9（需求 5）：条目右键菜单含「移出清单」与「加入其他清单」
                               e.preventDefault();
                               setCtxMenu({ planId: plan.id, recordId: r.id, x: e.clientX, y: e.clientY });
                             }}
@@ -308,11 +271,11 @@ export function PlansBoardView() {
                             <span className="iw-plan-member-id">#{r.id}</span>
                             <span className="iw-plan-member-name">{String(r.名称 ?? '')}</span>
                             <span className="iw-plan-member-brand">{String(r.品牌 ?? '')}</span>
-                            {/* v6.8（需求 2）：悬停可见的「×」移出入口（兼顾移动端无右键场景） */}
+                            {/* v6.9（需求 4）：条目「移出」按钮（右键菜单保留同一入口；v6.8 悬停 × 已移除） */}
                             <button
-                              className="iw-plan-member-x"
+                              className="iw-btn iw-btn-sm iw-btn-ghost iw-plan-member-remove"
                               type="button"
-                              data-testid={`iw-plan-card-remove-${plan.id}-${r.id}`}
+                              data-testid={`iw-plan-member-remove-${plan.id}-${r.id}`}
                               aria-label={`移出清单：${String(r.名称 ?? '')}`}
                               title={`移出清单：${String(r.名称 ?? '')}`}
                               onClick={(e) => {
@@ -320,7 +283,7 @@ export function PlansBoardView() {
                                 app.actions.toggleRecordInPlan(plan.id, r.id);
                               }}
                             >
-                              ×
+                              移出
                             </button>
                           </li>
                         );
@@ -334,7 +297,7 @@ export function PlansBoardView() {
         </div>
       )}
 
-      {/* 新增清单：弹层里筛选并挑选记录 */}
+      {/* v6.9（需求 1）：新增清单只需填写名称，创建为空清单 */}
       <Modal
         open={newOpen}
         title="新增清单"
@@ -353,139 +316,12 @@ export function PlansBoardView() {
             onChange={(e) => setNewName(e.target.value)}
           />
         </div>
-        <div className="iw-field">
-          <label className="iw-label" htmlFor="iw-new-plan-search">筛选记录</label>
-          <input
-            id="iw-new-plan-search"
-            className="iw-input"
-            data-testid="iw-new-plan-search"
-            value={pickQuery}
-            placeholder="搜索名称、品牌、编号…"
-            onChange={(e) => setPickQuery(e.target.value)}
-          />
-        </div>
-        <div className="iw-field">
-          <span className="iw-label">分类</span>
-          <div className="iw-chip-group" data-testid="iw-new-plan-cats">
-            {catOptions.map((c) => (
-              <button
-                key={c}
-                type="button"
-                className={`iw-chip${pickCats.includes(c) ? ' iw-chip-on' : ''}`}
-                data-testid={`iw-new-plan-cat-${c}`}
-                aria-pressed={pickCats.includes(c)}
-                onClick={() => setPickCats((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="iw-field">
-          <span className="iw-label">季节</span>
-          <div className="iw-chip-group" data-testid="iw-new-plan-seasons">
-            {seasonOptions.map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={`iw-chip${pickSeasons.includes(s) ? ' iw-chip-on' : ''}`}
-                data-testid={`iw-new-plan-season-${s}`}
-                aria-pressed={pickSeasons.includes(s)}
-                onClick={() => setPickSeasons((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]))}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-        {brandOptions.length > 0 && (
-          <div className="iw-field">
-            <span className="iw-label">品牌</span>
-            <div className="iw-chip-group" data-testid="iw-new-plan-brands">
-              {brandOptions.map((b) => (
-                <button
-                  key={b}
-                  type="button"
-                  className={`iw-chip${pickBrands.includes(b) ? ' iw-chip-on' : ''}`}
-                  data-testid={`iw-new-plan-brand-${b}`}
-                  aria-pressed={pickBrands.includes(b)}
-                  onClick={() => setPickBrands((prev) => (prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]))}
-                >
-                  {b}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {styleOptions.length > 0 && (
-          <div className="iw-field">
-            <span className="iw-label">款式</span>
-            <div className="iw-chip-group" data-testid="iw-new-plan-styles">
-              {styleOptions.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className={`iw-chip${pickStyles.includes(s) ? ' iw-chip-on' : ''}`}
-                  data-testid={`iw-new-plan-style-${s}`}
-                  aria-pressed={pickStyles.includes(s)}
-                  onClick={() => setPickStyles((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]))}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="iw-field">
-          <span className="iw-label">拥有形态</span>
-          <div className="iw-chip-group" data-testid="iw-new-plan-owns">
-            {OWN_OPTIONS.map((o) => (
-              <button
-                key={o}
-                type="button"
-                className={`iw-chip${ownFilter.includes(o) ? ' iw-chip-on' : ''}`}
-                data-testid={`iw-new-plan-own-${o}`}
-                aria-pressed={ownFilter.includes(o)}
-                onClick={() => setOwnFilter((prev) => (prev.includes(o) ? prev.filter((x) => x !== o) : [...prev, o]))}
-              >
-                {o}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="iw-field">
-          <span className="iw-label">
-            挑选记录（已选 {picked.length} 条）
-          </span>
-          <div className="iw-plan-picker" data-testid="iw-new-plan-list">
-            {pickCandidates.length === 0 ? (
-              <div className="iw-field-hint">没有符合条件的记录。</div>
-            ) : (
-              <>
-                <div className="iw-field-hint">
-                  共 {pickCandidates.length} 条符合条件，已显示前 {Math.min(PICK_LIMIT, pickCandidates.length)} 条 —— 收窄搜索词或筛选条件可看到更多。
-                </div>
-                {pickCandidates.slice(0, PICK_LIMIT).map((r) => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    className={`iw-plan-pick${picked.includes(r.id) ? ' iw-plan-pick-on' : ''}`}
-                    data-testid={`iw-new-plan-pick-${r.id}`}
-                    aria-pressed={picked.includes(r.id)}
-                    onClick={() => togglePick(r.id)}
-                  >
-                    <span className="iw-plan-member-id">#{r.id}</span>
-                    <span className="iw-plan-member-name">{String(r.名称 ?? '')}</span>
-                    <span className="iw-plan-member-brand">{String(r.品牌 ?? '')}</span>
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
+        <div className="iw-field-hint">
+          新清单创建时为空清单；创建后到模块右上「＋ 添加记录」批量挑选记录加入。
         </div>
       </Modal>
 
-      {/* v6.8（需求 2）：条目右键菜单 —— 「移出清单」只改成员关系，不删除记录本身 */}
+      {/* 条目右键菜单：「移出清单」+「加入其他清单」（v6.9 需求 4/5），只改成员关系 */}
       {ctxMenu ? (
         <>
           <div
@@ -506,9 +342,61 @@ export function PlansBoardView() {
             >
               移出清单
             </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="iw-plan-ctx-move"
+              data-testid="iw-plan-ctx-move"
+              onClick={() => {
+                setMoveTarget({ fromPlanId: ctxMenu.planId, recordId: ctxMenu.recordId });
+                setCtxMenu(null);
+              }}
+            >
+              加入其他清单…
+            </button>
           </div>
         </>
       ) : null}
+
+      {/* v6.9（需求 5）：加入其他清单 —— 迁移语义：加入目标清单并从当前清单移出 */}
+      <Modal
+        open={moveTarget !== null}
+        title="加入其他清单"
+        cancelText="关闭"
+        onCancel={() => setMoveTarget(null)}
+      >
+        {moveTarget ? (
+          <>
+            <p data-testid="iw-plan-move-subject">
+              记录 <b>{recLabel(recordById.get(moveTarget.recordId) ?? ({ id: moveTarget.recordId, 名称: '' } as RecordItem))}</b>
+            </p>
+            <div className="iw-field-hint">
+              选择目标清单后，该记录将<b>加入目标清单，并同时从当前清单移出</b>（迁移）；记录本身不会被删除或修改。
+            </div>
+            <div className="iw-plan-move-list" data-testid="iw-plan-move-list">
+              {moveCandidates.length === 0 ? (
+                <div className="iw-field-hint">没有可加入的其他清单（该记录已在所有清单里，或只有当前一份清单）。</div>
+              ) : (
+                moveCandidates.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="iw-plan-pick"
+                    data-testid={`iw-plan-move-option-${p.id}`}
+                    onClick={() => {
+                      app.actions.moveRecordToPlan(moveTarget.fromPlanId, p.id, moveTarget.recordId);
+                      setMoveTarget(null);
+                    }}
+                  >
+                    <span className="iw-plan-member-name">{p.名称}</span>
+                    <span className="iw-plan-member-brand">{p.记录ID列表.length} 条</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </>
+        ) : null}
+      </Modal>
 
       {/* v6.8（需求 4）：重命名清单 —— 清单名后编辑图标，只改名称不动成员关系 */}
       <Modal

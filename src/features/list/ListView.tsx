@@ -50,12 +50,12 @@ export function ListView() {
   };
 
   /**
-   * 行标注色（v6.8 单规则）：不在任何清单中的记录 → 浅黄（iw-row-noformat），其余不填色。
-   * hasPlan 取自 store 的 planMembers（记录 → 所在清单集合）。
+   * 行标注色（v6.9 单规则）：「没做过」且「不在任何清单中」→ 浅黄（iw-row-noformat），其余不填色。
+   * hasPlan 取自 store 的 planMembers（记录 → 所在清单集合）；done 取自记录「做过」字段。
    */
   const rowClass = (r: RecordItem): string | undefined => {
     const hasPlan = (app.planMembers?.get(r.id)?.size ?? 0) > 0;
-    return rowAnnotation(hasPlan) ? 'iw-row-noformat' : undefined;
+    return rowAnnotation(hasPlan, Boolean(r.做过)) ? 'iw-row-noformat' : undefined;
   };
 
   const renderCell = (col: string, r: RecordItem) => {

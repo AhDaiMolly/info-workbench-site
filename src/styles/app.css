@@ -720,14 +720,18 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .iw-plan-member-brand { color: var(--iw-text-3, #94a3b8); font-size: 12px; flex: 0 0 auto; }
-/* v6.8（需求 2）：条目悬停可见的「×」移出入口 —— 平时隐藏但保持可点击（兼顾触屏） */
-.iw-plan-member-x {
-  flex: 0 0 auto; align-self: center; border: none; background: none; cursor: pointer;
-  color: var(--iw-text-3, #94a3b8); font-size: 15px; line-height: 1;
-  padding: 2px 6px; border-radius: 4px; opacity: 0.15;
+/* v6.9（需求 4）：条目「移出」按钮（替代 v6.8 悬停 × 入口；右键菜单保留同一操作） */
+.iw-plan-member-remove { flex: 0 0 auto; align-self: center; }
+/* v6.9（需求 5）：右键菜单「加入其他清单」项 —— 非危险色 */
+.iw-plan-ctx-menu button.iw-plan-ctx-move { color: var(--iw-text-1, #1f2937); }
+/* v6.9（需求 5）：「加入其他清单」弹层里的目标清单候选列表 */
+.iw-plan-move-list {
+  max-height: 260px; overflow-y: auto; margin-top: 8px;
+  border: 1px solid var(--iw-border, #e5e7eb); border-radius: 6px; padding: 6px;
 }
-.iw-plan-member:hover .iw-plan-member-x, .iw-plan-member-x:focus-visible { opacity: 1; }
-.iw-plan-member-x:hover { color: var(--iw-danger, #dc2626); background: var(--iw-surface-2, #f8fafc); }
+/* v6.9（需求 2）：挑选页里已在清单中的记录行 —— 整行置灰且不可选 */
+.iw-plan-add-row-in { color: var(--iw-text-3, #94a3b8); background: var(--iw-surface-2, #f8fafc); }
+.iw-plan-add-row-in td { opacity: 0.65; }
 /* v6.8（需求 4）：清单名后的重命名图标按钮 */
 .iw-plan-card-rename { flex: 0 0 auto; padding: 0 4px; color: var(--iw-text-3, #94a3b8); }
 .iw-plan-card-rename:hover { color: var(--iw-primary, #2563eb); }

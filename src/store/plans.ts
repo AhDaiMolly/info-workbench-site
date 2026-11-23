@@ -175,6 +175,53 @@ export function reorderPlans(plans: PlanItem[], planIds: string[]): PlanItem[] {
   return planIds.map((id) => byId.get(id) as PlanItem);
 }
 
+/** v6.9（需求 2）：批量把记录加入清单（已在清单里的自动跳过；无可新增 → 原样返回同一引用） */
+export function addRecordsToPlan(plans: PlanItem[], planId: string, recordIds: number[]): PlanItem[] {
+  const target = plans.find((p) => p.id === planId);
+  if (!target) return plans;
+  const add = recordIds.filter((id) => !target.记录ID列表.includes(id));
+  if (!add.length) return plans;
+  const now = new Date().toISOString();
+  return plans.map((p) => {
+    if (p.id !== planId) return p;
+    const next = clonePlan(p);
+    // 新成员尾部追加（与 v6.7 单条加入的顺序语义一致：成员顺序由用户操作定义）
+    next.记录ID列表 = [...next.记录ID列表, ...add];
+    next.更新时间 = now;
+    return next;
+  });
+}
+
+/**
+ * v6.9（需求 5）：迁移 —— 记录从一份清单移到另一份（加入目标清单并从当前清单移出）。
+ * 单次引用变更，避免同事件两次 SET_PLANS；源/目标相同或记录不在源清单 → 原样返回同一引用。
+ */
+export function moveRecordToPlan(plans: PlanItem[], fromPlanId: string, toPlanId: string, recordId: number): PlanItem[] {
+  if (fromPlanId === toPlanId) return plans;
+  const from = plans.find((p) => p.id === fromPlanId);
+  const to = plans.find((p) => p.id === toPlanId);
+  if (!from || !to) return plans;
+  if (!from.记录ID列表.includes(recordId)) return plans;
+  const now = new Date().toISOString();
+  return plans.map((p) => {
+    if (p.id === fromPlanId) {
+      const next = clonePlan(p);
+      next.记录ID列表 = next.记录ID列表.filter((id) => id !== recordId);
+      next.更新时间 = now;
+      return next;
+    }
+    if (p.id === toPlanId) {
+      // 已在目标清单（理论上弹层已排除）→ 只完成「从当前清单移出」这一半
+      if (p.记录ID列表.includes(recordId)) return p;
+      const next = clonePlan(p);
+      next.记录ID列表.push(recordId);
+      next.更新时间 = now;
+      return next;
+    }
+    return p;
+  });
+}
+
 /** 把记录移出清单（不在该清单里 → 原样返回同一引用） */
 export function removeRecordFromPlan(plans: PlanItem[], planId: string, recordId: number): PlanItem[] {
   const target = plans.find((p) => p.id === planId);

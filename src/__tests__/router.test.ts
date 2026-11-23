@@ -142,4 +142,11 @@ describe('hash 路由构造与往返', () => {
     expect(parseHash('#/plan/p1').view).toBe('plan');
     expect(parseHash('#/plan/p1').planId).toBe('p1');
   });
+
+  it('v6.9：挑选页 #/plan-add/<id> 可解析且往返一致，旧 #/plan/<id> 不受影响', () => {
+    expect(parseHash('#/plan-add/p1').view).toBe('plan-add');
+    expect(parseHash('#/plan-add/p1').planId).toBe('p1');
+    expect(buildHash({ view: 'plan-add', planId: 'p1' })).toBe('#/plan-add/p1');
+    expect(parseHash(buildHash({ view: 'plan-add', planId: 'p9' })).planId).toBe('p9');
+  });
 });

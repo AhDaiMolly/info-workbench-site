@@ -12,7 +12,13 @@
  *
  * v6.8 增补：
  *   8. 模块无「编辑」入口；清单名后有编辑图标，点击只重命名该清单；
- *   9. 模块内条目可「移出清单」——右键菜单 + 悬停「×」两个入口，只改成员关系。
+ *   9. 模块内条目可「移出清单」——右键菜单入口，只改成员关系。
+ *
+ * v6.9 增补：
+ *   10. 「新增清单」弹层简化为只填名称（创建为空清单），无搜索 / 筛选 / 挑选内容；
+ *   11. 模块右上「＋ 添加记录」入口跳转挑选页（#/plan-add/:id）；
+ *   12. 条目右键菜单新增「加入其他清单…」（迁移语义：加入目标并从当前移出）；
+ *   13. 条目改为常显「移出」按钮（v6.8 悬停「×」按钮已删除）。
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -27,6 +33,8 @@ const holder = vi.hoisted(() => ({
   toggleRecordInPlan: vi.fn(),
   reorderPlanList: vi.fn(),
   reorderPlanMembers: vi.fn(),
+  addRecordsToPlan: vi.fn(),
+  moveRecordToPlan: vi.fn(),
   plans: [] as PlanItem[],
   navigateMock: vi.fn(),
 }));
@@ -98,6 +106,8 @@ vi.mock('../store/store', () => ({
       toggleRecordInPlan: holder.toggleRecordInPlan,
       reorderPlanList: holder.reorderPlanList,
       reorderPlanMembers: holder.reorderPlanMembers,
+      addRecordsToPlan: holder.addRecordsToPlan,
+      moveRecordToPlan: holder.moveRecordToPlan,
       removeFieldOption: vi.fn(),
       restoreFieldOption: vi.fn(),
     },
@@ -151,68 +161,30 @@ describe('v6.7 · 清单总览页布局', () => {
   });
 });
 
-describe('v6.7 · 新增清单（弹层内筛选并挑选记录）', () => {
-  it('填名称 + 搜索筛选 + 勾选记录 → 创建时带上初始成员', () => {
+describe('新增清单（v6.9：只需名称，创建为空清单）', () => {
+  it('填名称 → 创建时只带名称一个参数（空清单），不再传初始成员', () => {
     render(<PlansBoardView />);
     fireEvent.click(screen.getByTestId('iw-plans-new'));
 
     fireEvent.change(screen.getByTestId('iw-new-plan-name'), { target: { value: '  2026 夏季  ' } });
-    // 搜索：命中名称
-    fireEvent.change(screen.getByTestId('iw-new-plan-search'), { target: { value: '裙' } });
-    expect(screen.getByTestId('iw-new-plan-pick-2')).toBeTruthy();
-    expect(screen.queryByTestId('iw-new-plan-pick-1')).toBeNull();
-
-    fireEvent.click(screen.getByTestId('iw-new-plan-pick-2'));
     fireEvent.click(screen.getByRole('button', { name: '创建清单' }));
-    expect(holder.createPlanList).toHaveBeenCalledWith('2026 夏季', [2]);
+    expect(holder.createPlanList).toHaveBeenCalledWith('2026 夏季');
+    expect(holder.createPlanList).toHaveBeenCalledTimes(1);
   });
 
-  it('按分类筛选：点分类 chip 后候选只剩该分类', () => {
+  it('弹层里没有搜索框 / 筛选 chips / 候选挑选列表（v6.9 移除挑选流程）', () => {
     render(<PlansBoardView />);
     fireEvent.click(screen.getByTestId('iw-plans-new'));
-    fireEvent.click(screen.getByTestId('iw-new-plan-cat-上衣'));
-    expect(screen.getByTestId('iw-new-plan-pick-1')).toBeTruthy();
-    expect(screen.queryByTestId('iw-new-plan-pick-3')).toBeNull();
-  });
-
-  it('按季节筛选：点季节 chip 后候选只剩该季节', () => {
-    render(<PlansBoardView />);
-    fireEvent.click(screen.getByTestId('iw-plans-new'));
-    fireEvent.click(screen.getByTestId('iw-new-plan-season-夏'));
-    expect(screen.getByTestId('iw-new-plan-pick-2')).toBeTruthy();
-    expect(screen.queryByTestId('iw-new-plan-pick-1')).toBeNull();
-  });
-
-  it('按品牌筛选：点品牌 chip 后候选只剩该品牌', () => {
-    render(<PlansBoardView />);
-    fireEvent.click(screen.getByTestId('iw-plans-new'));
-    fireEvent.click(screen.getByTestId('iw-new-plan-brand-品牌乙'));
-    expect(screen.getByTestId('iw-new-plan-pick-3')).toBeTruthy();
-    expect(screen.queryByTestId('iw-new-plan-pick-1')).toBeNull();
-    // 再点一次取消选中 → 候选恢复
-    fireEvent.click(screen.getByTestId('iw-new-plan-brand-品牌乙'));
-    expect(screen.getByTestId('iw-new-plan-pick-1')).toBeTruthy();
-  });
-
-  it('按款式筛选：点款式 chip 后候选只剩该款式', () => {
-    render(<PlansBoardView />);
-    fireEvent.click(screen.getByTestId('iw-plans-new'));
-    fireEvent.click(screen.getByTestId('iw-new-plan-style-裙装'));
-    expect(screen.getByTestId('iw-new-plan-pick-2')).toBeTruthy();
-    expect(screen.queryByTestId('iw-new-plan-pick-1')).toBeNull();
-  });
-
-  it('按拥有形态筛选：纸质版只留同时有纸质版的记录，任意拥有恢复全部', () => {
-    render(<PlansBoardView />);
-    fireEvent.click(screen.getByTestId('iw-plans-new'));
-    fireEvent.click(screen.getByTestId('iw-new-plan-own-纸质版'));
-    expect(screen.getByTestId('iw-new-plan-pick-2')).toBeTruthy();
-    expect(screen.queryByTestId('iw-new-plan-pick-1')).toBeNull();
-    fireEvent.click(screen.getByTestId('iw-new-plan-own-纸质版'));
-    fireEvent.click(screen.getByTestId('iw-new-plan-own-任意拥有'));
-    // 三条记录都有拥有形态 → 全部回到候选里
-    expect(screen.getByTestId('iw-new-plan-pick-1')).toBeTruthy();
-    expect(screen.getByTestId('iw-new-plan-pick-3')).toBeTruthy();
+    expect(screen.queryByTestId('iw-new-plan-search')).toBeNull();
+    expect(screen.queryAllByTestId(/^iw-new-plan-pick-/)).toEqual([]);
+    expect(screen.queryAllByTestId(/^iw-new-plan-cat-/)).toEqual([]);
+    expect(screen.queryAllByTestId(/^iw-new-plan-season-/)).toEqual([]);
+    expect(screen.queryAllByTestId(/^iw-new-plan-brand-/)).toEqual([]);
+    expect(screen.queryAllByTestId(/^iw-new-plan-style-/)).toEqual([]);
+    expect(screen.queryAllByTestId(/^iw-new-plan-own-/)).toEqual([]);
+    // 弹层文案明确「空清单」与后续入口
+    expect(screen.getByRole('dialog').textContent).toContain('空清单');
+    expect(screen.getByRole('dialog').textContent).toContain('＋ 添加记录');
   });
 
   it('名称为空不创建；取消弹层不创建', () => {
@@ -305,12 +277,14 @@ describe('v6.8 · 清单名后的编辑图标（只重命名）', () => {
   });
 });
 
-describe('v6.8 · 条目移出清单（右键菜单 + 悬停 ×）', () => {
-  it('条目右键 → 弹出菜单含「移出清单」；点它回调 toggleRecordInPlan 且不跳详情页', () => {
+describe('v6.8/v6.9 · 条目移出清单（右键菜单 + 移出按钮）', () => {
+  it('条目右键 → 弹出菜单含「移出清单」与「加入其他清单…」；点移出回调 toggleRecordInPlan 且不跳详情页', () => {
     render(<PlansBoardView />);
     const row = screen.getByTestId('iw-plan-card-row-p1-1');
     fireEvent.contextMenu(row);
     expect(screen.getByTestId('iw-plan-ctx-menu')).toBeTruthy();
+    expect(screen.getByTestId('iw-plan-ctx-remove').textContent).toBe('移出清单');
+    expect(screen.getByTestId('iw-plan-ctx-move').textContent).toBe('加入其他清单…');
     fireEvent.click(screen.getByTestId('iw-plan-ctx-remove'));
     expect(holder.toggleRecordInPlan).toHaveBeenCalledWith('p1', 1);
     expect(holder.navigateMock).not.toHaveBeenCalled();
@@ -324,12 +298,65 @@ describe('v6.8 · 条目移出清单（右键菜单 + 悬停 ×）', () => {
     expect(holder.toggleRecordInPlan).not.toHaveBeenCalled();
   });
 
-  it('条目悬停「×」按钮 → 回调 toggleRecordInPlan 且不触发条目点击（跳详情）', () => {
+  it('v6.9：条目上常显「移出」按钮 → 回调 toggleRecordInPlan 且不触发条目点击（跳详情）', () => {
     render(<PlansBoardView />);
-    const x = screen.getByTestId('iw-plan-card-remove-p1-2');
-    expect(x.getAttribute('aria-label')).toBe('移出清单：百褶裙');
-    fireEvent.click(x);
+    const btn = screen.getByTestId('iw-plan-member-remove-p1-2');
+    expect(btn.getAttribute('aria-label')).toBe('移出清单：百褶裙');
+    expect(btn.textContent).toBe('移出');
+    fireEvent.click(btn);
     expect(holder.toggleRecordInPlan).toHaveBeenCalledWith('p1', 2);
     expect(holder.navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('v6.9：v6.8 的悬停「×」按钮已删除（iw-plan-card-remove-* 不再渲染）', () => {
+    render(<PlansBoardView />);
+    expect(screen.queryByTestId('iw-plan-card-remove-p1-1')).toBeNull();
+    expect(screen.queryByTestId('iw-plan-card-remove-p1-2')).toBeNull();
+    expect(screen.queryByTestId('iw-plan-card-remove-p2-3')).toBeNull();
+  });
+});
+
+describe('v6.9 · 条目「加入其他清单」（迁移语义）', () => {
+  it('右键 →「加入其他清单…」弹层：文案写明「加入目标并从当前移出」，候选排除已在清单', () => {
+    render(<PlansBoardView />);
+    fireEvent.contextMenu(screen.getByTestId('iw-plan-card-row-p1-1'));
+    fireEvent.click(screen.getByTestId('iw-plan-ctx-move'));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toContain('加入目标清单，并同时从当前清单移出');
+    expect(dialog.textContent).toContain('不会被删除或修改');
+    // 记录 1 已在 p1 → 候选只剩 p2；p1 不出现在选项里
+    expect(screen.getByTestId('iw-plan-move-option-p2')).toBeTruthy();
+    expect(screen.queryByTestId('iw-plan-move-option-p1')).toBeNull();
+  });
+
+  it('点目标清单选项 → 回调 moveRecordToPlan(当前清单, 目标清单, 记录)，弹层关闭', () => {
+    render(<PlansBoardView />);
+    fireEvent.contextMenu(screen.getByTestId('iw-plan-card-row-p1-1'));
+    fireEvent.click(screen.getByTestId('iw-plan-ctx-move'));
+    fireEvent.click(screen.getByTestId('iw-plan-move-option-p2'));
+    expect(holder.moveRecordToPlan).toHaveBeenCalledWith('p1', 'p2', 1);
+    expect(holder.toggleRecordInPlan).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('iw-plan-move-option-p2')).toBeNull();
+  });
+
+  it('关闭弹层不迁移', () => {
+    render(<PlansBoardView />);
+    fireEvent.contextMenu(screen.getByTestId('iw-plan-card-row-p1-1'));
+    fireEvent.click(screen.getByTestId('iw-plan-ctx-move'));
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(holder.moveRecordToPlan).not.toHaveBeenCalled();
+  });
+});
+
+describe('v6.9 · 模块「＋ 添加记录」入口', () => {
+  it('每个模块右上渲染「＋ 添加记录」按钮，点击跳转挑选页路由', () => {
+    render(<PlansBoardView />);
+    const add1 = screen.getByTestId('iw-plan-card-add-p1');
+    expect(add1.textContent).toBe('＋ 添加记录');
+    fireEvent.click(add1);
+    expect(holder.navigateMock).toHaveBeenCalledWith({ view: 'plan-add', planId: 'p1' });
+    fireEvent.click(screen.getByTestId('iw-plan-card-add-p2'));
+    expect(holder.navigateMock).toHaveBeenCalledWith({ view: 'plan-add', planId: 'p2' });
   });
 });

@@ -57,19 +57,20 @@ export function truncateTags(values: unknown, max = 2): { shown: string[]; extra
 }
 
 /**
- * 列表行标注色（v6.5 引入；v6.6 纳入清单口径；v6.8 简化为单规则）。
+ * 列表行标注色（v6.5 引入；v6.6 纳入清单口径；v6.8 简化为单规则；v6.9 纳入「做过」）。
  *
- *   · 单规则：不在任何清单中的记录整行标浅黄（noformat），其余一律不填色。
+ *   · v6.9 单规则：「没做过」且「不在任何清单中」的记录整行标浅黄（noformat），其余一律不填色。
+ *     做过 ✓ 的记录即使不在任何清单也不标色。
  *   · v6.8 废除旧浅灰（incomplete）规则与「拥有形态为空标黄」规则 ——
  *     分类 / 款式 / 季节 / 拥有形态不再参与行标注色。
  *
- * hasPlan = 该记录至少属于一份计划清单；缺省 true（调用方无法提供清单信息时，
- * 退化为「不标色」的保守口径）。
+ * hasPlan = 该记录至少属于一份计划清单；done = 该记录「做过」为真值。
+ * 两者缺省均为 true（调用方无法提供时退化为「不标色」的保守口径）。
  */
 export type RowAnnotation = 'noformat' | null;
 
-export function rowAnnotation(hasPlan: boolean = true): RowAnnotation {
-  return hasPlan ? null : 'noformat';
+export function rowAnnotation(hasPlan: boolean = true, done: boolean = true): RowAnnotation {
+  return !hasPlan && !done ? 'noformat' : null;
 }
 
 /**

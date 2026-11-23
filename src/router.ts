@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import type { Filters, SortKey, SortSpec } from './types';
 import { EMPTY_FILTERS } from './types';
 
-export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'editor' | 'plan' | 'plans';
+export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'editor' | 'plan' | 'plans' | 'plan-add';
 
 export interface Route {
   view: ViewName;
@@ -85,6 +85,8 @@ export function parseHash(hash: string): Route {
   else if (seg[0] === 'dashboard') view = 'dashboard';
   else if (seg[0] === 'settings') { view = 'settings'; settingsTab = seg[1] ?? null; }
   else if (seg[0] === 'plan') { view = 'plan'; planId = seg[1] ?? null; }
+  // v6.9（需求 2）：清单页签「＋」添加成员页 —— 布局与列表页一致，多选后批量加入该清单
+  else if (seg[0] === 'plan-add') { view = 'plan-add'; planId = seg[1] ?? null; }
   else if (seg[0] === 'plans') view = 'plans';
   else if (seg[0] === 'editor') { view = 'editor'; id = seg[1] && seg[1] !== 'new' ? Number(seg[1]) || null : null; }
 
@@ -129,8 +131,9 @@ export function buildHash(route: Partial<Route> & { view: ViewName }): string {
     : route.view === 'detail' ? `/detail/${route.id ?? ''}`
       : route.view === 'editor' ? `/editor/${route.id ?? 'new'}`
         : route.view === 'plan' ? `/plan/${route.planId ?? ''}`
-          : route.view === 'settings' ? `/settings${route.settingsTab ? `/${route.settingsTab}` : ''}`
-            : `/${route.view}`;
+          : route.view === 'plan-add' ? `/plan-add/${route.planId ?? ''}`
+            : route.view === 'settings' ? `/settings${route.settingsTab ? `/${route.settingsTab}` : ''}`
+              : `/${route.view}`;
   const qs = params.toString();
   return `#${base}${qs ? `?${qs}` : ''}`;
 }

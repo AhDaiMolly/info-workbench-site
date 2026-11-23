@@ -27,8 +27,8 @@ import {
   type ConfigMeta, type PendingChange, type WriteOutcome,
 } from './persist';
 import {
-  addRecordToPlan, buildPlanMembers, createPlan as createPlanList, deletePlan as deletePlanList,
-  makePlansFile, normalizePlans, parsePlansFile, planPlansSync, plansEqual, prunePlanMembers,
+  addRecordToPlan, addRecordsToPlan, buildPlanMembers, createPlan as createPlanList, deletePlan as deletePlanList,
+  makePlansFile, moveRecordToPlan, normalizePlans, parsePlansFile, planPlansSync, plansEqual, prunePlanMembers,
   removeRecordFromPlan, renamePlan as renamePlanList, reorderPlanMembers as reorderPlanMembersList, reorderPlans as reorderPlansList,
 } from './plans';
 import {
@@ -381,6 +381,10 @@ export interface AppActions {
   deletePlanList: (planId: string) => void;
   /** v6.2（需求 1）：把记录加入/移出计划清单（按当前成员关系自动取反） */
   toggleRecordInPlan: (planId: string, recordId: number) => void;
+  /** v6.9（需求 2）：批量把记录加入计划清单（已在清单里的自动跳过，一次落盘） */
+  addRecordsToPlan: (planId: string, recordIds: number[]) => void;
+  /** v6.9（需求 5）：把记录迁移到另一份清单 —— 加入目标清单并从当前清单移出，只改成员关系 */
+  moveRecordToPlan: (fromPlanId: string, toPlanId: string, recordId: number) => void;
   /** v6.7（需求 6）：拖拽重排清单本身在集合中的顺序 */
   reorderPlanList: (planIds: string[]) => void;
   /** v6.7（需求 7）：拖拽重排某清单内的成员顺序 */
@@ -741,6 +745,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         : addRecordToPlan(st.plans, planId, recordId);
       if (plans === st.plans) return;
       dispatch({ type: 'SET_PLANS', plans, changes: [planChange(planId, '编辑')] });
+    };
+
+    /* -------- v6.9：清单页签的批量加入与跨清单迁移 -------- */
+    const addRecordsToPlanAction = (planId: string, recordIds: number[]) => {
+      const st = current();
+      if (!recordIds.length) return;
+      if (!st.plans.some((p) => p.id === planId)) return;
+      const valid = new Set(st.records.map((r) => r.id));
+      const plans = addRecordsToPlan(st.plans, planId, recordIds.filter((id) => valid.has(id)));
+      if (plans === st.plans) return;
+      dispatch({ type: 'SET_PLANS', plans, changes: [planChange(planId, '编辑')] });
+    };
+
+    const moveRecordToPlanAction = (fromPlanId: string, toPlanId: string, recordId: number) => {
+      const st = current();
+      if (!st.records.some((r) => r.id === recordId)) return;
+      const plans = moveRecordToPlan(st.plans, fromPlanId, toPlanId, recordId);
+      if (plans === st.plans) return;
+      // 源与目标两份清单都动了成员关系，都要进待同步队列
+      dispatch({ type: 'SET_PLANS', plans, changes: [planChange(fromPlanId, '编辑'), planChange(toPlanId, '编辑')] });
     };
 
     /* -------- v6.7（需求 6/7）：清单与成员的拖拽重排 -------- */
@@ -1488,6 +1512,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       renamePlanList: renamePlanListAction,
       deletePlanList: deletePlanListAction,
       toggleRecordInPlan: toggleRecordInPlanAction,
+      addRecordsToPlan: addRecordsToPlanAction,
+      moveRecordToPlan: moveRecordToPlanAction,
       reorderPlanList: reorderPlanListAction,
       reorderPlanMembers: reorderPlanMembersAction,
       addFieldOption: addFieldOptionAction,

@@ -1046,25 +1046,36 @@ function apiPayload(name, buf) {
       record('v6.5-9 「电子」「纸质」列口径样本齐全', false, '当前数据缺少「仅电子版 / 仅纸质版」样本对');
     }
 
-    // 需求 8 + v6.8 需求 5：行标注色单规则 —— 不在任何清单 → 浅黄；在清单 → 不填色（信息全否不再参与）
+    // 需求 8 + v6.8 需求 5 + v6.9 需求 3：行标注色单规则 —— 没做过且不在任何清单 → 浅黄；其余不填色
     const plansSnap65 = await page.evaluate(() => {
       const c = JSON.parse(localStorage.getItem('iw.cache') || '{}');
       return (c.plans || []).map((p) => p['记录ID列表'] || []);
     });
     const memberIds65 = new Set();
     for (const list of plansSnap65) for (const id of list) memberIds65.add(id);
-    const outPlanRec65 = allFile.records.find((r) => String(r['名称'] || '').trim() && !memberIds65.has(r.id));
+    const outPlanRec65 = allFile.records.find((r) => String(r['名称'] || '').trim() && !memberIds65.has(r.id) && !r['做过']);
     const inPlanRec65 = allFile.records.find((r) => String(r['名称'] || '').trim() && memberIds65.has(r.id));
     if (outPlanRec65 && inPlanRec65) {
       const clsOut = await rowClass65(outPlanRec65.id);
       const clsIn = await rowClass65(inPlanRec65.id);
-      record('v6.5-8/v6.8-5 行标注色单规则：不在任何清单 → 浅黄（iw-row-noformat），在清单 → 不填色',
+      record('v6.5-8/v6.9-3 行标注色单规则：没做过且不在任何清单 → 浅黄（iw-row-noformat），在清单 → 不填色',
         clsOut.includes('iw-row-noformat') && !clsOut.includes('iw-row-incomplete')
           && !clsIn.includes('iw-row-noformat') && !clsIn.includes('iw-row-incomplete'),
-        `不在清单 #${outPlanRec65.id}=${clsOut || '(无class)'}；在清单 #${inPlanRec65.id}=${clsIn || '(无class)'}`);
+        `不在清单未做过 #${outPlanRec65.id}=${clsOut || '(无class)'}；在清单 #${inPlanRec65.id}=${clsIn || '(无class)'}`);
     } else {
-      record('v6.5-8/v6.8-5 行标注色单规则口径样本齐全', false,
-        `不在清单样本=${!!outPlanRec65}，在清单样本=${!!inPlanRec65}`);
+      record('v6.5-8/v6.9-3 行标注色单规则口径样本齐全', false,
+        `不在清单未做过样本=${!!outPlanRec65}，在清单样本=${!!inPlanRec65}`);
+    }
+
+    // v6.9-3 边界：做过 ✓ 且不在任何清单 → 不标色（做过豁免）
+    const doneOutRec65 = allFile.records.find((r) => String(r['名称'] || '').trim() && !memberIds65.has(r.id) && r['做过'] === true);
+    if (doneOutRec65) {
+      const clsDone = await rowClass65(doneOutRec65.id);
+      record('v6.9-3 边界：做过且不在任何清单 → 不标浅黄',
+        !clsDone.includes('iw-row-noformat') && !clsDone.includes('iw-row-incomplete'),
+        `做过不在清单 #${doneOutRec65.id}=${clsDone || '(无class)'}`);
+    } else {
+      record('v6.9-3 边界样本齐全（做过且不在清单）', false, '当前数据缺少「做过 ✓ 且不在任何清单」样本');
     }
 
     // 需求 6：搜索子串匹配（回归：搜「89」命中「896文艺套装-上衣」）
@@ -1320,7 +1331,8 @@ function apiPayload(name, buf) {
         `卡片标题：${plansAfterCreate.join(' / ') || '（空）'}；缓存成员数=${springCreatedRaw}`);
 
       // 把一条真实记录加入清单（详情页计划清单卡片 chip）
-      const joinTarget = allFile.records.find((r) => String(r['名称'] || '').trim());
+      // v6.9：选「没做过」的记录 —— 后续 v6.8-2c 断言「移出清单后整行转浅黄」依赖该口径
+      const joinTarget = allFile.records.find((r) => String(r['名称'] || '').trim() && !r['做过']);
       await goto(`#/detail/${joinTarget.id}`);
       const chipSel = '[data-testid="iw-plan-chips"] button';
       const chipOk = await waitFor(async () => (await page.evaluate((c) => document.querySelectorAll(c).length, chipSel)) > 0, 5000);
@@ -1536,7 +1548,7 @@ function apiPayload(name, buf) {
         Boolean(joinRow) && (joinRow.cell || '').includes('2026 春季'),
         `单元格=「${joinRow ? joinRow.cell : '行未找到'}」，title=「${joinRow ? joinRow.title : ''}」`);
 
-      // v6.8（需求 5）标注色单规则：唯一口径 = 是否在清单里（信息全否、拥有形态不再参与）
+      // v6.9（需求 3）标注色单规则：唯一口径 = 没做过且不在清单（信息全否、拥有形态不再参与；做过 ✓ 豁免）
       const plansSnapshot = await page.evaluate(() => {
         const c = JSON.parse(localStorage.getItem('iw.cache') || '{}');
         return (c.plans || []).map((p) => p['记录ID列表'] || []);
@@ -1545,29 +1557,40 @@ function apiPayload(name, buf) {
       for (const list of plansSnapshot) for (const id of list) memberIds66.add(id);
       const nonEmpty = (v) => (Array.isArray(v) ? v.some((x) => String(x ?? '').trim() !== '') : String(v ?? '').trim() !== '');
       const hasOwn = (r) => Array.isArray(r['拥有形态']) && r['拥有形态'].length > 0;
-      // rA：不在任何清单（即便信息齐全有形态）→ 浅黄
-      const rA = allFile.records.find((r) => nonEmpty(r['分类']) && nonEmpty(r['款式']) && nonEmpty(r['季节']) && hasOwn(r) && !memberIds66.has(r.id));
+      // rA：没做过且不在任何清单（即便信息齐全有形态）→ 浅黄
+      const rA = allFile.records.find((r) => nonEmpty(r['分类']) && nonEmpty(r['款式']) && nonEmpty(r['季节']) && hasOwn(r) && !memberIds66.has(r.id) && !r['做过']);
+      // rA2：做过且不在任何清单 → 不标色（v6.9 边界）
+      const rA2 = allFile.records.find((r) => r['做过'] === true && !memberIds66.has(r.id));
       // rB：信息不全但在清单里 → 不填色（浅灰规则已废除）
       const rB = allFile.records.find((r) => (!nonEmpty(r['分类']) || !nonEmpty(r['款式']) || !nonEmpty(r['季节'])) && memberIds66.has(r.id));
       const rB2 = allFile.records.find((r) => String(r['名称'] || '').trim() && memberIds66.has(r.id));
       if (rA) {
         await goto(`#/list?q=${encodeURIComponent(String(rA['名称'] || ''))}`);
         const rowA = await rowOf(rA.id);
-        record('v6.6-7/v6.8-5 不在任何清单 → 浅黄（iw-row-noformat），信息齐全也不豁免',
+        record('v6.6-7/v6.9-3 没做过且不在任何清单 → 浅黄（iw-row-noformat），信息齐全也不豁免',
           Boolean(rowA) && (rowA.cls || '').includes('iw-row-noformat') && !(rowA.cls || '').includes('iw-row-incomplete'),
           `#${rA.id}「${rA['名称']}」行 class=「${rowA ? rowA.cls : '行未找到'}」，清单单元格=「${rowA ? rowA.cell : ''}」`);
       } else {
-        record('v6.6-7/v6.8-5 不在任何清单 → 浅黄（iw-row-noformat），信息齐全也不豁免', false, 'fixture 中找不到「三者齐+有形态+无清单」的样本');
+        record('v6.6-7/v6.9-3 没做过且不在任何清单 → 浅黄（iw-row-noformat）', false, 'fixture 中找不到「三者齐+有形态+没做过+无清单」的样本');
+      }
+      if (rA2) {
+        await goto(`#/list?q=${encodeURIComponent(String(rA2['名称'] || ''))}`);
+        const rowA2 = await rowOf(rA2.id);
+        record('v6.9-3 边界：做过 ✓ 且不在任何清单 → 不标色（做过豁免）',
+          Boolean(rowA2) && !(rowA2.cls || '').includes('iw-row-noformat') && !(rowA2.cls || '').includes('iw-row-incomplete'),
+          `#${rA2.id}「${rA2['名称']}」行 class=「${rowA2 ? rowA2.cls : '行未找到'}」`);
+      } else {
+        record('v6.9-3 边界：做过且不在清单 → 不标色', false, 'fixture 中找不到「做过 ✓ 且无清单」的样本');
       }
       const rBFinal = rB || rB2;
       if (rBFinal) {
         await goto(`#/list?q=${encodeURIComponent(String(rBFinal['名称'] || ''))}`);
         const rowB = await rowOf(rBFinal.id);
-        record('v6.6-8/v6.8-5 在清单里 → 不填色（信息不全也不标浅灰，灰规则废除）',
+        record('v6.6-8/v6.9-3 在清单里 → 不填色（信息不全也不标浅灰，灰规则废除）',
           Boolean(rowB) && !(rowB.cls || '').includes('iw-row-noformat') && !(rowB.cls || '').includes('iw-row-incomplete'),
           `#${rBFinal.id}「${rBFinal['名称']}」行 class=「${rowB ? rowB.cls : '行未找到'}」（信息不全=${!rB ? false : true}）`);
       } else {
-        record('v6.6-8/v6.8-5 在清单里 → 不填色（信息不全也不标浅灰，灰规则废除）', false, 'fixture 中找不到在清单里的样本');
+        record('v6.6-8/v6.9-3 在清单里 → 不填色（信息不全也不标浅灰，灰规则废除）', false, 'fixture 中找不到在清单里的样本');
       }
     }
 
@@ -1679,92 +1702,36 @@ function apiPayload(name, buf) {
         ? `栅格列数=${layout67.cols}，模块 ${layout67.cards} 个（数据 ${beforePlans67.length} 份），首个模块「${firstPlan ? firstPlan.名称 : '?'}」列出 ${layout67.rows} 条（成员 ${firstPlan ? firstPlan.members.length : '?'} 条），首行=「${layout67.firstRowText}」`
         : '未找到清单栅格');
 
-    // 需求 4：新增清单 —— 弹层里可按分类筛选，挑选记录后创建
+    // 需求 4（v6.9 需求 1 简化）：新增清单弹层只填名称，无筛选与挑选内容
     await page.evaluate(() => document.querySelector('[data-testid="iw-plans-new"]').click());
     await new Promise((r) => setTimeout(r, 600));
     const modal67 = await page.evaluate(() => ({
       hasName: Boolean(document.querySelector('[data-testid="iw-new-plan-name"]')),
       hasSearch: Boolean(document.querySelector('[data-testid="iw-new-plan-search"]')),
-      catChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-cat-"]')).map((c) => c.textContent || ''),
+      catChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-cat-"]')).length,
       seasonChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-season-"]')).length,
       brandChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-brand-"]')).length,
       styleChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-style-"]')).length,
       ownChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-own-"]')).length,
       picksBefore: document.querySelectorAll('[data-testid^="iw-new-plan-pick-"]').length,
+      text: (document.querySelector('[role="dialog"]') || { textContent: '' }).textContent || '',
     }));
-    record('v6.7-3 新增清单弹层具备名称 / 搜索 / 分类 / 季节 / 品牌 / 款式 / 拥有形态筛选与记录挑选列表',
-      modal67.hasName && modal67.hasSearch && modal67.catChips.length > 0 && modal67.seasonChips > 0
-        && modal67.brandChips > 0 && modal67.styleChips > 0 && modal67.ownChips >= 3 && modal67.picksBefore > 0,
-      `名称=${modal67.hasName}，搜索=${modal67.hasSearch}，分类 chip ${modal67.catChips.length} 个，季节 chip ${modal67.seasonChips} 个，品牌 chip ${modal67.brandChips} 个，款式 chip ${modal67.styleChips} 个，拥有形态 chip ${modal67.ownChips} 个，候选 ${modal67.picksBefore} 条`);
+    record('v6.7-3/v6.9-1 新增清单弹层仅填名称：有名称输入框，无搜索/筛选 chips/候选挑选列表，文案写明空清单',
+      modal67.hasName && !modal67.hasSearch && modal67.catChips === 0 && modal67.seasonChips === 0
+        && modal67.brandChips === 0 && modal67.styleChips === 0 && modal67.ownChips === 0 && modal67.picksBefore === 0
+        && modal67.text.includes('空清单') && modal67.text.includes('＋ 添加记录'),
+      `名称=${modal67.hasName}，搜索=${modal67.hasSearch}，分类 chip ${modal67.catChips} 个，季节 chip ${modal67.seasonChips} 个，品牌 chip ${modal67.brandChips} 个，款式 chip ${modal67.styleChips} 个，拥有形态 chip ${modal67.ownChips} 个，候选 ${modal67.picksBefore} 条，文案含空清单提示=${modal67.text.includes('空清单')}`);
 
-    let catFilter67 = null;
-    if (modal67.catChips.length > 0) {
-      const label67 = await page.evaluate(() => {
-        const chip = document.querySelector('[data-testid^="iw-new-plan-cat-"]');
-        if (!chip) return null;
-        chip.click();
-        return (chip.textContent || '').trim();
-      });
-      await new Promise((r) => setTimeout(r, 500));
-      catFilter67 = await page.evaluate((label) => {
-        const rows = Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-pick-"]'));
-        const cache = JSON.parse(localStorage.getItem('iw.cache') || '{}');
-        const byId = new Map((cache.records || []).map((r) => [r.id, r]));
-        const ids = rows.map((r) => Number((r.getAttribute('data-testid') || '').replace('iw-new-plan-pick-', '')));
-        const allMatch = ids.every((id) => {
-          const rec = byId.get(id);
-          if (!rec) return false;
-          const c = rec['分类'];
-          const arr = Array.isArray(c) ? c.map((x) => String(x ?? '')) : [String(c ?? '')];
-          return arr.includes(label);
-        });
-        return { label, n: ids.length, allMatch };
-      }, label67);
-      record('v6.7-4 弹层按分类筛选生效（候选收窄且全部属于该分类）',
-        Boolean(catFilter67) && catFilter67.n > 0 && catFilter67.n <= modal67.picksBefore && catFilter67.allMatch,
-        `分类「${catFilter67 ? catFilter67.label : '?'}」下候选 ${catFilter67 ? catFilter67.n : 0} 条（筛选前 ${modal67.picksBefore} 条），全部属于该分类=${catFilter67 ? catFilter67.allMatch : false}`);
-      // 取消筛选，回到全部候选
-      await page.evaluate(() => document.querySelector('[data-testid^="iw-new-plan-cat-"]').click());
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    // 拥有形态筛选：勾「纸质版」后候选只留真正带纸质版的记录
-    let ownFilter67 = null;
-    if (modal67.ownChips >= 3) {
-      await page.evaluate(() => document.querySelector('[data-testid="iw-new-plan-own-纸质版"]').click());
-      await new Promise((r) => setTimeout(r, 500));
-      ownFilter67 = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-pick-"]'));
-        const cache = JSON.parse(localStorage.getItem('iw.cache') || '{}');
-        const byId = new Map((cache.records || []).map((r) => [r.id, r]));
-        const ids = rows.map((r) => Number((r.getAttribute('data-testid') || '').replace('iw-new-plan-pick-', '')));
-        const allOwn = ids.every((id) => {
-          const rec = byId.get(id);
-          const own = rec && Array.isArray(rec['拥有形态']) ? rec['拥有形态'].map((x) => String(x ?? '')) : [];
-          return own.includes('纸质版');
-        });
-        return { n: ids.length, allOwn };
-      });
-      record('v6.7-4b 弹层按拥有形态筛选生效（候选全部带该形态）',
-        Boolean(ownFilter67) && ownFilter67.allOwn,
-        `勾「纸质版」后候选 ${ownFilter67 ? ownFilter67.n : 0} 条，全部带纸质版=${ownFilter67 ? ownFilter67.allOwn : false}`);
-      await page.evaluate(() => document.querySelector('[data-testid="iw-new-plan-own-纸质版"]').click());
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    const picked67 = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-pick-"]')).slice(0, 2);
-      const ids = rows.map((r) => Number((r.getAttribute('data-testid') || '').replace('iw-new-plan-pick-', '')));
-      rows.forEach((r) => r.click());
+    // v6.9-2：经「＋ 添加记录」挑选页给新清单批量加入成员（多选 + 已在清单置灰）
+    await page.evaluate(() => {
       const input = document.querySelector('[data-testid="iw-new-plan-name"]');
       if (input) {
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
         setter.call(input, '冒烟v67清单');
         input.dispatchEvent(new Event('input', { bubbles: true }));
       }
-      return ids;
     });
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 300));
     await page.evaluate(() => {
       const dlg = document.querySelector('[role="dialog"]');
       if (!dlg) return;
@@ -1774,10 +1741,80 @@ function apiPayload(name, buf) {
     await new Promise((r) => setTimeout(r, 900));
     const created67 = (await cachePlans()).find((p) => p.名称 === '冒烟v67清单') || null;
     const newPlanId67 = created67 ? created67.id : null;
-    record('v6.7-5 新增清单创建成功：清单入列且带上挑选的记录（顺序保留）',
-      Boolean(created67) && picked67.length === 2
-        && JSON.stringify(created67.members) === JSON.stringify(picked67),
-      created67 ? `新清单 ${created67.id}「${created67.名称}」成员=${JSON.stringify(created67.members)}，挑选=${JSON.stringify(picked67)}` : '未创建成功');
+    record('v6.7-5/v6.9-1 新增清单创建成功：只带名称、初始 0 条成员（空清单）',
+      Boolean(created67) && created67.members.length === 0,
+      created67 ? `新清单 ${created67.id}「${created67.名称}」成员=${JSON.stringify(created67.members)}` : '未创建成功');
+
+    let picked67 = [];
+    if (newPlanId67) {
+      // 挑选页入口：模块右上「＋ 添加记录」
+      await page.evaluate((pid) => {
+        const b = document.querySelector(`[data-testid="iw-plan-card-add-${pid}"]`);
+        if (b) b.click();
+      }, newPlanId67);
+      const planAddOk = await waitFor(async () => (await page.evaluate(() => document.querySelector('[data-testid="iw-plan-add-view"]')) !== null, 6000));
+      const planAddTitle = await page.evaluate(() => (document.querySelector('[data-testid="iw-plan-add-title"]') || { textContent: '' }).textContent || '');
+      const planAddLayout = await page.evaluate(() => ({
+        hasSearch: Boolean(document.querySelector('.iw-toolbar input')),
+        hasFilter: Boolean(document.querySelector('.iw-filter-panel')),
+        hasTable: Boolean(document.querySelector('[data-testid="iw-plan-add-table"]')),
+        hasPager: Boolean(document.querySelector('.iw-pager')),
+      }));
+      record('v6.9-2 「＋ 添加记录」跳转挑选页：标题与列表页同款布局（搜索框/筛选面板/表格/分页器）',
+        planAddOk && planAddTitle.includes('加入清单') && planAddLayout.hasSearch && planAddLayout.hasFilter && planAddLayout.hasTable && planAddLayout.hasPager,
+        `挑选页出现=${planAddOk}，标题=「${planAddTitle}」，搜索=${planAddLayout.hasSearch}，筛选=${planAddLayout.hasFilter}，表格=${planAddLayout.hasTable}，分页=${planAddLayout.hasPager}`);
+
+      if (planAddOk) {
+        // 勾两条不在清单里的记录（行点击）；再验证「已在清单」置灰不可勾
+        picked67 = await page.evaluate(() => {
+          const rows = Array.from(document.querySelectorAll('[data-testid^="iw-plan-add-row-"]')).slice(0, 2);
+          const ids = rows.map((r) => Number((r.getAttribute('data-testid') || '').replace('iw-plan-add-row-', '')));
+          rows.forEach((r) => r.click());
+          return ids;
+        });
+        await new Promise((r) => setTimeout(r, 400));
+        const confirmText67 = await page.evaluate(() => (document.querySelector('[data-testid="iw-plan-add-confirm"]') || { textContent: '' }).textContent || '');
+        await page.evaluate(() => { const b = document.querySelector('[data-testid="iw-plan-add-confirm"]'); if (b) b.click(); });
+        await new Promise((r) => setTimeout(r, 900));
+        const afterAdd67 = (await cachePlans()).find((p) => p.id === newPlanId67);
+        const backOnPlans = await page.evaluate(() => Boolean(document.querySelector('[data-testid="iw-plans-view"]')));
+        record('v6.9-2 挑选页多选确认：批量加入清单并返回清单页即时可见',
+          Array.isArray(picked67) && picked67.length === 2 && confirmText67.includes('2')
+            && Boolean(afterAdd67) && JSON.stringify(afterAdd67.members.slice(-2)) === JSON.stringify(picked67)
+            && backOnPlans,
+          `勾选=${JSON.stringify(picked67)}，按钮文案=「${confirmText67}」，加入后成员=${afterAdd67 ? JSON.stringify(afterAdd67.members) : '清单缺失'}，已回清单页=${backOnPlans}`);
+
+        // 已在清单的记录在挑选页置灰且不可重复加入（再进一次挑选页）
+        await page.evaluate((pid) => {
+          const b = document.querySelector(`[data-testid="iw-plan-card-add-${pid}"]`);
+          if (b) b.click();
+        }, newPlanId67);
+        const inPlanState69 = await (async () => {
+          // 注意：waitFor 只返回布尔，这里需要 evaluate 的对象结果，改手动轮询
+          for (let i = 0; i < 10; i += 1) {
+            const st = await page.evaluate((rid) => {
+              const row = document.querySelector(`[data-testid="iw-plan-add-row-${rid}"]`);
+              if (!row) return null;
+              const chk = document.querySelector(`[data-testid="iw-plan-add-check-${rid}"]`);
+              return {
+                rowClass: row.className || '',
+                disabled: chk ? chk.disabled : null,
+                tag: Boolean(document.querySelector(`[data-testid="iw-plan-add-in-${rid}"]`)),
+              };
+            }, picked67[0]);
+            if (st) return st;
+            await new Promise((r) => setTimeout(r, 600));
+          }
+          return null;
+        })();
+        record('v6.9-2 已在清单的记录整行置灰、勾选框禁用并带「已在清单」标识（防重复加入）',
+          Boolean(inPlanState69) && inPlanState69.rowClass.includes('iw-plan-add-row-in')
+            && inPlanState69.disabled === true && inPlanState69.tag,
+          `#${picked67[0]} 行class=「${inPlanState69 ? inPlanState69.rowClass : '行未找到'}」，勾选禁用=${inPlanState69 ? inPlanState69.disabled : '?'}，标识=${inPlanState69 ? inPlanState69.tag : '?'}`);
+        await page.evaluate(() => { const b = document.querySelector('[data-testid="iw-plan-add-back"]'); if (b) b.click(); });
+        await new Promise((r) => setTimeout(r, 700));
+      }
+    }
 
     if (newPlanId67) {
       // 需求 5（v6.8 需求 3/4）：模块「编辑」入口已移除；清单名后编辑图标只重命名
@@ -1913,7 +1950,7 @@ function apiPayload(name, buf) {
           && afterCtx68.recordAlive && afterCtx68.rowGone,
         `右键触发=${ctxOk68}，菜单含「移出清单」=${ctxMenu68}，成员表=${JSON.stringify(afterCtx68.members)}，记录存在=${afterCtx68.recordAlive}，模块条目已移除=${afterCtx68.rowGone}`);
 
-      // 经详情页 chip 加回，再验证入口二：条目悬停 × 按钮（无右键的常规入口）
+      // 经详情页 chip 加回，再验证入口二：v6.9 条目常显「移出」按钮（v6.8 悬停 × 已删除）
       await goto(`#/detail/${rid68}`);
       await new Promise((r) => setTimeout(r, 800));
       const readd68 = await page.evaluate(() => {
@@ -1924,10 +1961,13 @@ function apiPayload(name, buf) {
       });
       await new Promise((r) => setTimeout(r, 700));
       await navHash('#/plans');
-      const xBtn68 = await page.evaluate((pid, rid) => Boolean(document.querySelector(`[data-testid="iw-plan-card-remove-${pid}-${rid}"]`)), spring68.id, rid68);
-      await page.evaluate((pid, rid) => {
-        const b = document.querySelector(`[data-testid="iw-plan-card-remove-${pid}-${rid}"]`);
-        if (b) b.click();
+      const xBtnGone68 = await page.evaluate((pid, rid) => !document.querySelector(`[data-testid="iw-plan-card-remove-${pid}-${rid}"]`), spring68.id, rid68);
+      const removeBtn68 = await page.evaluate((pid, rid) => {
+        const b = document.querySelector(`[data-testid="iw-plan-member-remove-${pid}-${rid}"]`);
+        if (!b) return null;
+        const label = b.getAttribute('aria-label') || '';
+        b.click();
+        return { label };
       }, spring68.id, rid68);
       await new Promise((r) => setTimeout(r, 700));
       const afterX68 = await page.evaluate((pid, rid) => {
@@ -1938,9 +1978,10 @@ function apiPayload(name, buf) {
           recordAlive: (c.records || []).some((r) => r.id === rid),
         };
       }, spring68.id, rid68);
-      record('v6.8-2b 条目悬停 × 按钮移出清单（常规入口，记录本身保留）',
-        readd68 && xBtn68 && Array.isArray(afterX68.members) && !afterX68.members.includes(rid68) && afterX68.recordAlive,
-        `加回=${readd68}，×按钮存在=${xBtn68}，成员表=${JSON.stringify(afterX68.members)}，记录存在=${afterX68.recordAlive}`);
+      record('v6.8-2b/v6.9-4·6 条目「移出」按钮移出清单（v6.8 悬停 × 已删除，记录本身保留）',
+        readd68 && xBtnGone68 && Boolean(removeBtn68) && removeBtn68.label.includes('移出清单')
+          && Array.isArray(afterX68.members) && !afterX68.members.includes(rid68) && afterX68.recordAlive,
+        `加回=${readd68}，×按钮已删除=${xBtnGone68}，移出按钮 aria-label=「${removeBtn68 ? removeBtn68.label : '未找到'}」，成员表=${JSON.stringify(afterX68.members)}，记录存在=${afterX68.recordAlive}`);
 
       // 列表页即时一致：清单列不含该记录、整行由不填色转浅黄（在清单→不在清单的填色翻转边界）
       await goto(`#/list?q=${encodeURIComponent('#' + rid68)}`);
@@ -1951,7 +1992,7 @@ function apiPayload(name, buf) {
         const cell = row.children[ci];
         return { cls: row.className, cell: cell ? (cell.textContent || '') : null };
       }, rid68, colIdx66);
-      record('v6.8-2c 移出后列表页即时一致：清单列不含该记录、整行转浅黄',
+      record('v6.8-2c/v6.9-3 移出后列表页即时一致：清单列不含该记录、整行转浅黄（没做过且不在任何清单）',
         Boolean(afterList68) && !(afterList68.cell || '').includes('2026 春季')
           && (afterList68.cls || '').includes('iw-row-noformat') && !(afterList68.cls || '').includes('iw-row-incomplete'),
         `移出前 class=「${clsBefore68 || '(无class)'}」，移出后 class=「${afterList68 ? afterList68.cls : '行未找到'}」，清单单元格=「${afterList68 ? afterList68.cell : ''}」`);
@@ -1965,8 +2006,83 @@ function apiPayload(name, buf) {
         if (btn) btn.click();
       });
       await new Promise((r) => setTimeout(r, 700));
+
+      /* ---------------- v6.9-5 条目右键「加入其他清单」—— 迁移语义 ---------------- */
+      // 挑一份非当前清单做迁移目标（fixture 自带多份清单，运行时从缓存取，不硬编码 id）
+      const moveDest69 = (await cachePlans()).find((p) => p.id !== spring68.id && !p.members.includes(rid68));
+      if (moveDest69) {
+        const destBefore69 = moveDest69.members.slice();
+        await navHash('#/plans');
+        // 右键条目 → 菜单应同时含「移出清单」与「加入其他清单…」
+        const ctxOk69 = await page.evaluate((pid, rid) => {
+          const row = document.querySelector(`[data-testid="iw-plan-card-row-${pid}-${rid}"]`);
+          if (!row) return false;
+          row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+          return true;
+        }, spring68.id, rid68);
+        await new Promise((r) => setTimeout(r, 500));
+        const ctxMove69 = await page.evaluate(() => {
+          const m = document.querySelector('[data-testid="iw-plan-ctx-menu"]');
+          const moveBtn = document.querySelector('[data-testid="iw-plan-ctx-move"]');
+          const hasBoth = Boolean(m) && (m.textContent || '').includes('移出清单') && moveBtn;
+          if (moveBtn) moveBtn.click();
+          return { hasBoth, clicked: Boolean(moveBtn) };
+        });
+        await new Promise((r) => setTimeout(r, 600));
+        const moveDlg69 = await page.evaluate((rid, dest, fromPid) => {
+          const dlg = document.querySelector('[role="dialog"]');
+          const subject = document.querySelector('[data-testid="iw-plan-move-subject"]');
+          const list = document.querySelector('[data-testid="iw-plan-move-list"]');
+          return {
+            text: dlg ? (dlg.textContent || '') : '',
+            subjectOk: subject ? (subject.textContent || '').includes(`#${rid}`) : false,
+            destOption: list ? Boolean(document.querySelector(`[data-testid="iw-plan-move-option-${dest}"]`)) : false,
+            // 候选必须排除当前清单（以及该记录已在的任何清单）——在弹层真正渲染后检查
+            selfExcluded: list ? !document.querySelector(`[data-testid="iw-plan-move-option-${fromPid}"]`) : false,
+          };
+        }, rid68, moveDest69.id, spring68.id);
+        await page.evaluate((dest) => { const b = document.querySelector(`[data-testid="iw-plan-move-option-${dest}"]`); if (b) b.click(); }, moveDest69.id);
+        await new Promise((r) => setTimeout(r, 800));
+        const afterMove69 = await page.evaluate((fromPid, destPid, rid) => {
+          const c = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+          const from = (c.plans || []).find((p) => p.id === fromPid);
+          const dest = (c.plans || []).find((p) => p.id === destPid);
+          return {
+            fromMembers: from ? from['记录ID列表'] : null,
+            destMembers: dest ? dest['记录ID列表'] : null,
+            recordAlive: (c.records || []).some((r) => r.id === rid),
+            rowGoneFrom: !document.querySelector(`[data-testid="iw-plan-card-row-${fromPid}-${rid}"]`),
+            rowInDest: Boolean(document.querySelector(`[data-testid="iw-plan-card-row-${destPid}-${rid}"]`)),
+          };
+        }, spring68.id, moveDest69.id, rid68);
+        record('v6.9-5 条目右键「加入其他清单」迁移：弹层文案明确迁移语义、候选排除当前清单、目标加入且当前移出、记录保留',
+          ctxOk69 && ctxMove69.hasBoth && moveDlg69.selfExcluded
+            && moveDlg69.text.includes('加入目标清单，并同时从当前清单移出') && moveDlg69.subjectOk && moveDlg69.destOption
+            && Array.isArray(afterMove69.fromMembers) && !afterMove69.fromMembers.includes(rid68)
+            && Array.isArray(afterMove69.destMembers) && afterMove69.destMembers.includes(rid68)
+            && afterMove69.recordAlive && afterMove69.rowGoneFrom && afterMove69.rowInDest,
+          `右键=${ctxOk69}，菜单双入口=${ctxMove69.hasBoth}，候选排除当前清单=${moveDlg69.selfExcluded}，文案含迁移语义=${moveDlg69.text.includes('加入目标清单，并同时从当前清单移出')}，主体含 #${rid68}=${moveDlg69.subjectOk}，目标选项=${moveDlg69.destOption}，源成员=${JSON.stringify(afterMove69.fromMembers)}，目标成员=${JSON.stringify(afterMove69.destMembers)}，记录存在=${afterMove69.recordAlive}，源模块条目移除=${afterMove69.rowGoneFrom}，目标模块条目出现=${afterMove69.rowInDest}`);
+
+        // 恢复原成员关系：目标清单移出 + 重新加回「2026 春季」（与测试前状态一致）
+        await goto(`#/detail/${rid68}`);
+        await new Promise((r) => setTimeout(r, 800));
+        await page.evaluate((destName) => {
+          const btn = Array.from(document.querySelectorAll('[data-testid="iw-plan-chips"] button'))
+            .find((b) => (b.getAttribute('aria-label') || '').includes(destName));
+          if (btn) btn.click();
+        }, moveDest69.名称);
+        await new Promise((r) => setTimeout(r, 600));
+        await page.evaluate(() => {
+          const btn = Array.from(document.querySelectorAll('[data-testid="iw-plan-chips"] button'))
+            .find((b) => (b.getAttribute('aria-label') || '').includes('2026 春季'));
+          if (btn) btn.click();
+        });
+        await new Promise((r) => setTimeout(r, 700));
+      } else {
+        record('v6.9-5 条目右键「加入其他清单」迁移', false, '没有可用于迁移的其他清单（fixture 清单不足）');
+      }
     } else {
-      record('v6.8-2 清单页条目移出清单（右键菜单 + 悬停 × 两入口）', false,
+      record('v6.8-2/v6.9-4·5 清单页条目移出清单与加入其他清单（右键菜单 + 条目「移出」按钮）', false,
         `「2026 春季」或成员缺失：plan=${!!spring68}，成员数=${spring68 ? spring68.members.length : 0}`);
     }
 

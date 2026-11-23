@@ -128,14 +128,16 @@ beforeEach(() => {
   recordsHolder.records = [
     // 1：双清单 + 三者齐 + 有形态 → 无标注色
     rec({ id: 1, 名称: '双清单齐全', 分类: ['女装'], 款式: '外套', 季节: '夏', 拥有形态: ['电子版'] }),
-    // 2：单清单 + 三者齐 + 无形态 → 黄（旧规则）
+    // 2：单清单 + 三者齐 + 无形态 → 无色（在清单）
     rec({ id: 2, 名称: '单清单无形态', 分类: ['女装'], 款式: '外套', 季节: '夏', 拥有形态: [] }),
-    // 3：无清单 + 三者齐 + 有形态 → 黄（新规则：清单为空至少标黄）
+    // 3：无清单 + 三者齐 + 有形态 + 没做过 → 浅黄（v6.9 规则）
     rec({ id: 3, 名称: '无清单齐全', 分类: ['女装'], 款式: '外套', 季节: '夏', 拥有形态: ['纸质版'] }),
-    // 4：无清单 + 分类缺 → 灰（灰优先于黄）
+    // 4：无清单 + 分类缺 + 没做过 → 浅黄（v6.8 起无灰规则）
     rec({ id: 4, 名称: '无清单缺分类', 分类: [], 款式: '外套', 季节: '夏', 拥有形态: ['电子版'] }),
-    // 5：在清单里 + 分类缺 → 灰（旧灰规则）
+    // 5：在清单里 + 分类缺 → 无色（v6.8 起在清单一律不标色）
     rec({ id: 5, 名称: '在清单缺季节', 分类: ['女装'], 款式: '外套', 季节: '', 拥有形态: [] }),
+    // 6：无清单但做过 ✓ → v6.9 边界：不标色
+    rec({ id: 6, 名称: '无清单但做过', 分类: ['女装'], 款式: '外套', 季节: '夏', 拥有形态: ['电子版'], 做过: true }),
   ];
   // 5 号也放进 p2，验证「在清单里但三要素缺 → 仍灰」
   plansHolder.plans[1].记录ID列表.push(5);
@@ -167,14 +169,20 @@ describe('v6.6（需求 2）：列表「清单」列', () => {
   });
 });
 
-describe('行标注色（v6.8 单规则：不在任何清单 → 浅黄，其余不填色）', () => {
-  it('不在任何清单 → 浅黄（无论信息齐全与否、是否有形态）', () => {
+describe('行标注色（v6.9 单规则：没做过且不在任何清单 → 浅黄，其余不填色）', () => {
+  it('没做过且不在任何清单 → 浅黄（无论信息齐全与否、是否有形态）', () => {
     const { container } = render(<ListView />);
     expect(rowByName(container, '无清单齐全').className).toContain('iw-row-noformat');
     expect(rowByName(container, '无清单缺分类').className).toContain('iw-row-noformat');
   });
 
-  it('在清单里 → 无标注色（即使信息缺或无形态）', () => {
+  it('不在任何清单但做过 ✓ → 不标色（v6.9 边界：做过豁免）', () => {
+    const { container } = render(<ListView />);
+    expect(rowByName(container, '无清单但做过').className).not.toContain('iw-row-noformat');
+    expect(rowByName(container, '无清单但做过').className).not.toContain('iw-row-incomplete');
+  });
+
+  it('在清单里 → 无标注色（即使信息缺或无形态或没做过）', () => {
     const { container } = render(<ListView />);
     expect(rowByName(container, '双清单齐全').className).not.toContain('iw-row-noformat');
     expect(rowByName(container, '单清单无形态').className).not.toContain('iw-row-noformat');
