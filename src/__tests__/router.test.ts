@@ -133,4 +133,13 @@ describe('hash 路由构造与往返', () => {
     expect(r.filters.计划清单).toEqual(['p3']);
     expect(r.filters.品牌).toEqual([]);
   });
+
+  it('v6.7：清单总览页 #/plans 可解析，且 buildHash 能往返', () => {
+    expect(parseHash('#/plans').view).toBe('plans');
+    expect(parseHash('#/plans/').view).toBe('plans');
+    expect(buildHash({ view: 'plans' })).toBe('#/plans');
+    // 旧路径 #/plan/<id> 不受影响，仍然解析为单个清单的管理页
+    expect(parseHash('#/plan/p1').view).toBe('plan');
+    expect(parseHash('#/plan/p1').planId).toBe('p1');
+  });
 });

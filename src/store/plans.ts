@@ -134,11 +134,45 @@ export function addRecordToPlan(plans: PlanItem[], planId: string, recordId: num
   return plans.map((p) => {
     if (p.id !== planId || p.记录ID列表.includes(recordId)) return p;
     const next = clonePlan(p);
+    // v6.7：成员顺序由用户拖拽定义 → 新成员尾部追加，不再强制 id 升序
     next.记录ID列表.push(recordId);
-    next.记录ID列表.sort((a, b) => a - b);
     next.更新时间 = new Date().toISOString();
     return next;
   });
+}
+
+/**
+ * v6.7（需求 6/7）：整体重排某清单的成员顺序。
+ * 校验新旧成员集合一致（只换顺序、不增删），否则原样返回同一引用。
+ */
+export function reorderPlanMembers(plans: PlanItem[], planId: string, recordIds: number[]): PlanItem[] {
+  const target = plans.find((p) => p.id === planId);
+  if (!target) return plans;
+  const sameSet = target.记录ID列表.length === recordIds.length
+    && target.记录ID列表.every((id) => recordIds.includes(id));
+  if (!sameSet) return plans;
+  const orderChanged = recordIds.some((id, i) => target.记录ID列表[i] !== id);
+  if (!orderChanged) return plans;
+  return plans.map((p) => {
+    if (p.id !== planId) return p;
+    const next = clonePlan(p);
+    next.记录ID列表 = recordIds.slice();
+    next.更新时间 = new Date().toISOString();
+    return next;
+  });
+}
+
+/**
+ * v6.7（需求 6）：重排清单本身在集合中的顺序（数组顺序即展示顺序）。
+ * 校验 id 集合一致，顺序未变 → 原样返回同一引用。
+ */
+export function reorderPlans(plans: PlanItem[], planIds: string[]): PlanItem[] {
+  if (plans.length !== planIds.length) return plans;
+  if (!plans.every((p) => planIds.includes(p.id))) return plans;
+  const orderChanged = planIds.some((id, i) => plans[i].id !== id);
+  if (!orderChanged) return plans;
+  const byId = new Map(plans.map((p) => [p.id, p]));
+  return planIds.map((id) => byId.get(id) as PlanItem);
 }
 
 /** 把记录移出清单（不在该清单里 → 原样返回同一引用） */
@@ -199,15 +233,31 @@ function planChanged(base: PlanItem, other: PlanItem): boolean {
   return PLAN_FIELDS.some((f) => !sameField(base[f], other[f]));
 }
 
-/** 两份清单集合是否内容一致（顺序无关，按 id 对齐） */
+/** 两份清单集合是否内容一致（v6.7 起顺序敏感：清单顺序是用户定义的数据） */
 export function plansEqual(a: PlanItem[], b: PlanItem[]): boolean {
   if (a.length !== b.length) return false;
-  const byId = new Map(a.map((p) => [p.id, p]));
-  for (const p of b) {
-    const other = byId.get(p.id);
-    if (!other || planChanged(other, p)) return false;
-  }
-  return true;
+  // 顺序敏感 = 逐位比较；id 也必须一致，否则「两份不同清单内容恰好相同」会被误判为相同
+  return a.every((p, i) => p.id === b[i].id && !planChanged(p, b[i]));
+}
+
+/** id 序列是否一致（用于合并时判断哪一侧动过顺序） */
+function sameOrder(a: PlanItem[], b: PlanItem[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((p, i) => p.id === b[i].id);
+}
+
+/**
+ * v6.7：按「动过顺序的一侧」重排合并结果。
+ * 本地顺序与基线不一致 → 用本地顺序；否则用远端顺序（捕获其他设备的重排）。
+ * 顺序源里不存在的清单（本次新建等）保持 merged 原顺序追加在尾部。
+ */
+function applyOrderPreference(merged: PlanItem[], baseline: PlanItem[], local: PlanItem[], remote: PlanItem[]): PlanItem[] {
+  const orderSource = sameOrder(local, baseline) ? remote : local;
+  const rank = new Map(orderSource.map((p, i) => [p.id, i]));
+  const inOrder = merged.filter((p) => rank.has(p.id))
+    .sort((x, y) => (rank.get(x.id) as number) - (rank.get(y.id) as number));
+  const rest = merged.filter((p) => !rank.has(p.id));
+  return [...inOrder, ...rest];
 }
 
 /** 清单存在但所有成员引用都指向不存在的记录 → 视为无内容的空清单，不写远端 */
@@ -323,7 +373,7 @@ function mergeWithBaseline(
     // 双方都没有：跳过
   }
 
-  return { plans: merged, conflicts, addedFromRemote, addedFromLocal, baselineMode: 'persisted' };
+  return { plans: applyOrderPreference(merged, baseline, local, remote), conflicts, addedFromRemote, addedFromLocal, baselineMode: 'persisted' };
 }
 
 /** 从待同步队列里提取「用户动过的清单 ID」 */
@@ -384,7 +434,9 @@ function mergeWithoutBaseline(
     }
   }
 
-  return { plans: merged, conflicts, addedFromRemote, addedFromLocal, baselineMode: 'reconstructed' };
+  // v6.7：无基线时本地顺序优先，远端新增清单追加在尾部（merged 本身按 id 排序，这里以本地顺序重排）
+  const ordered = applyOrderPreference(merged, [], local, remote.map((p) => p));
+  return { plans: ordered, conflicts, addedFromRemote, addedFromLocal, baselineMode: 'reconstructed' };
 }
 
 /**

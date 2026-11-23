@@ -29,7 +29,7 @@ import {
 import {
   addRecordToPlan, buildPlanMembers, createPlan as createPlanList, deletePlan as deletePlanList,
   makePlansFile, normalizePlans, parsePlansFile, planPlansSync, plansEqual, prunePlanMembers,
-  removeRecordFromPlan, renamePlan as renamePlanList,
+  removeRecordFromPlan, renamePlan as renamePlanList, reorderPlanMembers as reorderPlanMembersList, reorderPlans as reorderPlansList,
 } from './plans';
 import {
   addOptionValue, BASE_SIZE_TAGS, effectiveOptions as effectiveOptionsFor, effectiveSizeTags, makeOptionsFile, mergeOptionsSync,
@@ -373,14 +373,18 @@ export interface AppActions {
   restoreIgnoredCheck: (key: string) => void;
   /** v6.1.1：恢复全部被忽略的待确认项 */
   restoreAllIgnoredChecks: () => void;
-  /** v6.2（需求 1）：新建计划清单，成功返回清单 ID，名称为空返回 null */
-  createPlanList: (name: string) => string | null;
+  /** v6.2（需求 1）：新建计划清单，成功返回清单 ID，名称为空返回 null；v6.7 起可带初始成员 */
+  createPlanList: (name: string, memberIds?: number[]) => string | null;
   /** v6.2（需求 1）：重命名计划清单 */
   renamePlanList: (planId: string, name: string) => void;
   /** v6.2（需求 1）：删除计划清单 —— 只解除记录关联，不删除任何记录 */
   deletePlanList: (planId: string) => void;
   /** v6.2（需求 1）：把记录加入/移出计划清单（按当前成员关系自动取反） */
   toggleRecordInPlan: (planId: string, recordId: number) => void;
+  /** v6.7（需求 6）：拖拽重排清单本身在集合中的顺序 */
+  reorderPlanList: (planIds: string[]) => void;
+  /** v6.7（需求 7）：拖拽重排某清单内的成员顺序 */
+  reorderPlanMembers: (planId: string, recordIds: number[]) => void;
   /** v6.3（需求 2）：沉淀一个新的品牌 / 款式选项（手动输入保存成功后自动调用；已在候选里为幂等 no-op） */
   addFieldOption: (fieldKey: string, value: string) => void;
   /** v6.3（需求 2）：从候选里删除一个选项（历史记录原值保留不受影响） */
@@ -685,14 +689,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       时间: new Date().toISOString(),
     });
 
-    const createPlanListAction = (name: string): string | null => {
+    const createPlanListAction = (name: string, memberIds?: number[]): string | null => {
       const st = current();
       const res = createPlanList(st.plans, name);
       if (!res) {
         dispatch({ type: 'SET_NOTICE', notice: '清单名称不能为空。' });
         return null;
       }
-      dispatch({ type: 'SET_PLANS', plans: res.plans, changes: [planChange(res.plan.id, '新增')] });
+      // v6.7：新建清单可直接带上初始成员（一次 dispatch，避开同事件多次 SET_PLANS 的 stale 状态）
+      let plans = res.plans;
+      if (memberIds && memberIds.length) {
+        const valid = new Set(st.records.map((r) => r.id));
+        const ids = memberIds.filter((id) => valid.has(id));
+        const target = plans.find((p) => p.id === res.plan.id);
+        if (target && ids.length) {
+          plans = plans.map((p) => (p.id === res.plan.id ? { ...p, 记录ID列表: ids.slice(), 更新时间: new Date().toISOString() } : p));
+        }
+      }
+      dispatch({ type: 'SET_PLANS', plans, changes: [planChange(res.plan.id, '新增')] });
       return res.plan.id;
     };
 
@@ -725,6 +739,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const plans = inPlan
         ? removeRecordFromPlan(st.plans, planId, recordId)
         : addRecordToPlan(st.plans, planId, recordId);
+      if (plans === st.plans) return;
+      dispatch({ type: 'SET_PLANS', plans, changes: [planChange(planId, '编辑')] });
+    };
+
+    /* -------- v6.7（需求 6/7）：清单与成员的拖拽重排 -------- */
+    const reorderPlanListAction = (planIds: string[]) => {
+      const st = current();
+      const plans = reorderPlansList(st.plans, planIds);
+      if (plans === st.plans) return;
+      // 顺序是全局数据：为移动涉及的每份清单发待同步条目，阻断自动拉取并在无基线重建时归属正确
+      const moved = planIds.filter((id, i) => st.plans[i]?.id !== id);
+      const changes = (moved.length ? moved : planIds).map((id) => planChange(id, '编辑'));
+      dispatch({ type: 'SET_PLANS', plans, changes });
+    };
+
+    const reorderPlanMembersAction = (planId: string, recordIds: number[]) => {
+      const st = current();
+      const plans = reorderPlanMembersList(st.plans, planId, recordIds);
       if (plans === st.plans) return;
       dispatch({ type: 'SET_PLANS', plans, changes: [planChange(planId, '编辑')] });
     };
@@ -1456,6 +1488,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       renamePlanList: renamePlanListAction,
       deletePlanList: deletePlanListAction,
       toggleRecordInPlan: toggleRecordInPlanAction,
+      reorderPlanList: reorderPlanListAction,
+      reorderPlanMembers: reorderPlanMembersAction,
       addFieldOption: addFieldOptionAction,
       removeFieldOption: removeFieldOptionAction,
       restoreFieldOption: restoreFieldOptionAction,

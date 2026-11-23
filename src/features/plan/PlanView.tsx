@@ -13,6 +13,7 @@
 import { useMemo, useState } from 'react';
 import { useApp } from '../../store/store';
 import { navigate } from '../../router';
+import { Modal } from '../../components/Modal';
 import type { RecordItem } from '../../types';
 
 /** 候选列表最多直接渲染的条数（848+ 条全渲染会卡，超出折叠提示收窄搜索词） */
@@ -25,6 +26,9 @@ function recLabel(r: RecordItem): string {
 export function PlanView({ planId }: { planId: string | null }) {
   const app = useApp();
   const [addQuery, setAddQuery] = useState('');
+  /* v6.7：清单模块「编辑」入口落到本页，顺带支持重命名 */
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameName, setRenameName] = useState('');
 
   const plan = useMemo(
     () => app.plans.find((p) => p.id === planId) ?? null,
@@ -92,6 +96,17 @@ export function PlanView({ planId }: { planId: string | null }) {
         <div className="iw-actions-row">
           <button className="iw-btn" type="button" onClick={() => navigate({ view: 'settings', settingsTab: 'plans', filters: app.filters, query: app.query, sort: app.sort })}>
             返回设置
+          </button>
+          <button
+            className="iw-btn"
+            type="button"
+            data-testid="iw-plan-rename"
+            onClick={() => {
+              setRenameName(plan.名称);
+              setRenameOpen(true);
+            }}
+          >
+            重命名清单
           </button>
           <button className="iw-btn iw-btn-primary" type="button" onClick={() => navigate({ view: 'list', filters: { ...app.filters, 计划清单: [plan.id] }, query: app.query, sort: app.sort })}>
             在列表中查看这份清单
@@ -200,6 +215,27 @@ export function PlanView({ planId }: { planId: string | null }) {
           </div>
         ) : null}
       </div>
+
+      {/* v6.7：重命名清单（只改名称，不动成员关系） */}
+      <Modal
+        open={renameOpen}
+        title="重命名清单"
+        confirmText="保存"
+        onConfirm={() => {
+          const name = renameName.trim();
+          if (name && name !== plan.名称) app.actions.renamePlanList(plan.id, name);
+          setRenameOpen(false);
+        }}
+        onCancel={() => setRenameOpen(false)}
+      >
+        <input
+          className="iw-input"
+          data-testid="iw-plan-rename-input"
+          value={renameName}
+          onChange={(e) => setRenameName(e.target.value)}
+        />
+        <div className="iw-field-hint">重命名只改清单名称，清单里的记录与顺序都不受影响。</div>
+      </Modal>
     </div>
   );
 }

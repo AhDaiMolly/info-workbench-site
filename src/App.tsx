@@ -11,6 +11,7 @@ import { EditorForm } from './features/editor/EditorForm';
 import { DashboardView } from './features/dashboard/DashboardView';
 import { SettingsView } from './features/settings/SettingsView';
 import { PlanView } from './features/plan/PlanView';
+import { PlansBoardView } from './features/plan/PlansBoardView';
 import { Modal } from './components/Modal';
 import { APP_NAME } from './schema';
 import { findShellRecords } from './store/migrations';
@@ -35,13 +36,14 @@ export function App() {
     return days >= app.backupIntervalDays;
   }, [app.pending.length, app.lastSyncedAt, app.backupIntervalDays, app.config]);
 
-  const navItems: Array<{ view: 'list' | 'dashboard' | 'settings'; label: string }> = [
+  const navItems: Array<{ view: 'list' | 'dashboard' | 'plans' | 'settings'; label: string }> = [
     { view: 'list', label: '列表' },
     { view: 'dashboard', label: '看板' },
+    { view: 'plans', label: '清单' },
     { view: 'settings', label: '设置' },
   ];
 
-  const go = (view: 'list' | 'dashboard' | 'settings') => {
+  const go = (view: 'list' | 'dashboard' | 'plans' | 'settings') => {
     navigate({ view, filters: app.filters, query: app.query, sort: app.sort });
   };
 
@@ -194,6 +196,8 @@ export function App() {
         {route.view === 'settings' ? <SettingsView initialGroup={route.settingsTab === 'plans' ? 'plans' : undefined} /> : null}
         {/* v6.6（需求 1）：单个清单的管理视图（添加 / 移除只改成员关系） */}
         {route.view === 'plan' ? <PlanView planId={route.planId} /> : null}
+        {/* v6.7（需求 1~7）：一级页签「清单」——清单模块两列平铺、可新增/编辑/删除、拖拽排序 */}
+        {route.view === 'plans' ? <PlansBoardView /> : null}
       </main>
 
       <Modal

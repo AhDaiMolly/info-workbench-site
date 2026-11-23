@@ -58,10 +58,11 @@ describe('v6.2 · 计划清单：增删改（纯函数）', () => {
 });
 
 describe('v6.2 · 记录加入/移出清单', () => {
-  it('加入：成员排序去重；重复加入不产生新引用；清单不存在原样返回', () => {
+  it('加入：v6.7 起新成员尾部追加（不再强制 id 升序）；重复加入不产生新引用；清单不存在原样返回', () => {
     const plans = [mkPlan('p1', 'A', [5, 3])];
     const next = addRecordToPlan(plans, 'p1', 4);
-    expect(next[0].记录ID列表).toEqual([3, 4, 5]);
+    // 成员顺序由用户拖拽定义 → 追加到尾部，保留既有顺序
+    expect(next[0].记录ID列表).toEqual([5, 3, 4]);
     expect(addRecordToPlan(next, 'p1', 4)).toBe(next);
     expect(addRecordToPlan(plans, 'p404', 4)).toBe(plans);
   });
@@ -123,11 +124,14 @@ describe('v6.2 · plans 数据读写（结构归一与文件格式）', () => {
     expect(out[1].记录ID列表).toEqual([2, 3]);
   });
 
-  it('plansEqual：顺序无关按 id 对齐；plansHaveContent', () => {
+  it('plansEqual：v6.7 起顺序敏感（清单顺序与成员顺序都算内容）；plansHaveContent', () => {
     expect(plansEqual([mkPlan('p1', 'A', [1])], [mkPlan('p1', 'A', [1])])).toBe(true);
     expect(plansEqual([mkPlan('p1', 'A', [1])], [mkPlan('p1', 'A', [2])])).toBe(false);
     expect(plansEqual([mkPlan('p1', 'A')], [mkPlan('p2', 'A')])).toBe(false);
     expect(plansEqual([], [])).toBe(true);
+    // 顺序敏感：同样两份清单，仅顺序不同 → 视为不同
+    expect(plansEqual([mkPlan('p1', 'A'), mkPlan('p2', 'B')], [mkPlan('p2', 'B'), mkPlan('p1', 'A')])).toBe(false);
+    expect(plansEqual([mkPlan('p1', 'A', [1, 2])], [mkPlan('p1', 'A', [2, 1])])).toBe(false);
     expect(plansHaveContent([mkPlan('p1', 'A')])).toBe(true);
     expect(plansHaveContent([])).toBe(false);
   });

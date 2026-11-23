@@ -1568,6 +1568,285 @@ function apiPayload(name, buf) {
       record('v6.2-7 编辑页身高码（表单分区存在）', false, '编辑页分区缺失');
     }
 
+    /* ---------------- v6.7 一级页签「清单」：模块平铺 / 新增筛选 / 编辑删除 / 拖拽排序 ---------------- */
+    // 用 hash 切换（不 reload）：新增的临时清单留在内存态里，避免中途自动拉取把本地新清单当「远端已删除」
+    const navHash = async (h) => {
+      await page.evaluate((x) => { window.location.hash = x; }, h);
+      await new Promise((r) => setTimeout(r, 800));
+    };
+    const cachePlans = () => page.evaluate(() => {
+      const c = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+      return (c.plans || []).map((p) => ({ id: p.id, 名称: p['名称'], members: p['记录ID列表'] || [] }));
+    });
+    const cacheCounts = () => page.evaluate(() => {
+      const c = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+      return { records: (c.records || []).length, plans: (c.plans || []).length };
+    });
+    /** 真实 HTML5 拖拽：dragstart → dragover → drop（组件按 React state 记录拖拽源，不依赖 dataTransfer 内容） */
+    const dragAndDrop = async (fromSel, toSel) => {
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return;
+        el.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+      }, fromSel);
+      await new Promise((r) => setTimeout(r, 260));
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return;
+        el.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+      }, toSel);
+      await new Promise((r) => setTimeout(r, 200));
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return;
+        el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+      }, toSel);
+      await new Promise((r) => setTimeout(r, 600));
+    };
+
+    await navHash('#/plans');
+    const nav67 = await page.evaluate(() => ({
+      labels: Array.from(document.querySelectorAll('.iw-nav a')).map((a) => (a.textContent || '').trim()),
+      active: (document.querySelector('.iw-nav a.iw-nav-active') || {}).textContent || '',
+      hash: window.location.hash,
+    }));
+    record('v6.7-1 一级导航出现「清单」页签（与列表/看板/设置齐平）',
+      nav67.labels.join(',') === '列表,看板,清单,设置'
+        && nav67.active.trim() === '清单'
+        && nav67.hash.startsWith('#/plans'),
+      `导航=[${nav67.labels.join('、')}]，当前选中=「${nav67.active.trim()}」，hash=${nav67.hash}`);
+
+    const beforePlans67 = await cachePlans();
+    const layout67 = await page.evaluate(() => {
+      const grid = document.querySelector('[data-testid="iw-plans-grid"]');
+      if (!grid) return null;
+      const cards = Array.from(document.querySelectorAll('[data-testid^="iw-plan-card-"]'))
+        .filter((el) => el.tagName === 'SECTION');
+      const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length;
+      const first = cards[0];
+      const firstId = first ? (first.getAttribute('data-testid') || '').replace('iw-plan-card-', '') : '';
+      return {
+        cols,
+        cards: cards.length,
+        firstId,
+        rows: first ? first.querySelectorAll('li[data-testid^="iw-plan-card-row-"]').length : 0,
+        firstRowText: first && first.querySelector('li[data-testid^="iw-plan-card-row-"]')
+          ? (first.querySelector('li[data-testid^="iw-plan-card-row-"]').textContent || '').trim() : '',
+        memberUl: Boolean(first && first.querySelector('[data-testid^="iw-plan-card-members-"]')),
+      };
+    });
+    const firstPlan = beforePlans67.find((p) => p.id === (layout67 && layout67.firstId));
+    record('v6.7-2 清单模块两列平铺，数量与数据一致，模块内直接列出记录',
+      Boolean(layout67)
+        && layout67.cols === 2
+        && layout67.cards === beforePlans67.length
+        && (!firstPlan || layout67.rows === firstPlan.members.length)
+        && (layout67.rows === 0 || layout67.memberUl),
+      layout67
+        ? `栅格列数=${layout67.cols}，模块 ${layout67.cards} 个（数据 ${beforePlans67.length} 份），首个模块「${firstPlan ? firstPlan.名称 : '?'}」列出 ${layout67.rows} 条（成员 ${firstPlan ? firstPlan.members.length : '?'} 条），首行=「${layout67.firstRowText}」`
+        : '未找到清单栅格');
+
+    // 需求 4：新增清单 —— 弹层里可按分类筛选，挑选记录后创建
+    await page.evaluate(() => document.querySelector('[data-testid="iw-plans-new"]').click());
+    await new Promise((r) => setTimeout(r, 600));
+    const modal67 = await page.evaluate(() => ({
+      hasName: Boolean(document.querySelector('[data-testid="iw-new-plan-name"]')),
+      hasSearch: Boolean(document.querySelector('[data-testid="iw-new-plan-search"]')),
+      catChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-cat-"]')).map((c) => c.textContent || ''),
+      seasonChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-season-"]')).length,
+      brandChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-brand-"]')).length,
+      styleChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-style-"]')).length,
+      ownChips: Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-own-"]')).length,
+      picksBefore: document.querySelectorAll('[data-testid^="iw-new-plan-pick-"]').length,
+    }));
+    record('v6.7-3 新增清单弹层具备名称 / 搜索 / 分类 / 季节 / 品牌 / 款式 / 拥有形态筛选与记录挑选列表',
+      modal67.hasName && modal67.hasSearch && modal67.catChips.length > 0 && modal67.seasonChips > 0
+        && modal67.brandChips > 0 && modal67.styleChips > 0 && modal67.ownChips >= 3 && modal67.picksBefore > 0,
+      `名称=${modal67.hasName}，搜索=${modal67.hasSearch}，分类 chip ${modal67.catChips.length} 个，季节 chip ${modal67.seasonChips} 个，品牌 chip ${modal67.brandChips} 个，款式 chip ${modal67.styleChips} 个，拥有形态 chip ${modal67.ownChips} 个，候选 ${modal67.picksBefore} 条`);
+
+    let catFilter67 = null;
+    if (modal67.catChips.length > 0) {
+      const label67 = await page.evaluate(() => {
+        const chip = document.querySelector('[data-testid^="iw-new-plan-cat-"]');
+        if (!chip) return null;
+        chip.click();
+        return (chip.textContent || '').trim();
+      });
+      await new Promise((r) => setTimeout(r, 500));
+      catFilter67 = await page.evaluate((label) => {
+        const rows = Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-pick-"]'));
+        const cache = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+        const byId = new Map((cache.records || []).map((r) => [r.id, r]));
+        const ids = rows.map((r) => Number((r.getAttribute('data-testid') || '').replace('iw-new-plan-pick-', '')));
+        const allMatch = ids.every((id) => {
+          const rec = byId.get(id);
+          if (!rec) return false;
+          const c = rec['分类'];
+          const arr = Array.isArray(c) ? c.map((x) => String(x ?? '')) : [String(c ?? '')];
+          return arr.includes(label);
+        });
+        return { label, n: ids.length, allMatch };
+      }, label67);
+      record('v6.7-4 弹层按分类筛选生效（候选收窄且全部属于该分类）',
+        Boolean(catFilter67) && catFilter67.n > 0 && catFilter67.n <= modal67.picksBefore && catFilter67.allMatch,
+        `分类「${catFilter67 ? catFilter67.label : '?'}」下候选 ${catFilter67 ? catFilter67.n : 0} 条（筛选前 ${modal67.picksBefore} 条），全部属于该分类=${catFilter67 ? catFilter67.allMatch : false}`);
+      // 取消筛选，回到全部候选
+      await page.evaluate(() => document.querySelector('[data-testid^="iw-new-plan-cat-"]').click());
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    // 拥有形态筛选：勾「纸质版」后候选只留真正带纸质版的记录
+    let ownFilter67 = null;
+    if (modal67.ownChips >= 3) {
+      await page.evaluate(() => document.querySelector('[data-testid="iw-new-plan-own-纸质版"]').click());
+      await new Promise((r) => setTimeout(r, 500));
+      ownFilter67 = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-pick-"]'));
+        const cache = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+        const byId = new Map((cache.records || []).map((r) => [r.id, r]));
+        const ids = rows.map((r) => Number((r.getAttribute('data-testid') || '').replace('iw-new-plan-pick-', '')));
+        const allOwn = ids.every((id) => {
+          const rec = byId.get(id);
+          const own = rec && Array.isArray(rec['拥有形态']) ? rec['拥有形态'].map((x) => String(x ?? '')) : [];
+          return own.includes('纸质版');
+        });
+        return { n: ids.length, allOwn };
+      });
+      record('v6.7-4b 弹层按拥有形态筛选生效（候选全部带该形态）',
+        Boolean(ownFilter67) && ownFilter67.allOwn,
+        `勾「纸质版」后候选 ${ownFilter67 ? ownFilter67.n : 0} 条，全部带纸质版=${ownFilter67 ? ownFilter67.allOwn : false}`);
+      await page.evaluate(() => document.querySelector('[data-testid="iw-new-plan-own-纸质版"]').click());
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    const picked67 = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('[data-testid^="iw-new-plan-pick-"]')).slice(0, 2);
+      const ids = rows.map((r) => Number((r.getAttribute('data-testid') || '').replace('iw-new-plan-pick-', '')));
+      rows.forEach((r) => r.click());
+      const input = document.querySelector('[data-testid="iw-new-plan-name"]');
+      if (input) {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(input, '冒烟v67清单');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return ids;
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    await page.evaluate(() => {
+      const dlg = document.querySelector('[role="dialog"]');
+      if (!dlg) return;
+      const btn = Array.from(dlg.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '创建清单');
+      if (btn) btn.click();
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    const created67 = (await cachePlans()).find((p) => p.名称 === '冒烟v67清单') || null;
+    const newPlanId67 = created67 ? created67.id : null;
+    record('v6.7-5 新增清单创建成功：清单入列且带上挑选的记录（顺序保留）',
+      Boolean(created67) && picked67.length === 2
+        && JSON.stringify(created67.members) === JSON.stringify(picked67),
+      created67 ? `新清单 ${created67.id}「${created67.名称}」成员=${JSON.stringify(created67.members)}，挑选=${JSON.stringify(picked67)}` : '未创建成功');
+
+    if (newPlanId67) {
+      // 需求 5：编辑 —— 进清单管理页并可重命名
+      await page.evaluate((pid) => {
+        const b = document.querySelector(`[data-testid="iw-plan-edit-${pid}"]`);
+        if (b) b.click();
+      }, newPlanId67);
+      await new Promise((r) => setTimeout(r, 900));
+      const editPage67 = await page.evaluate(() => ({
+        hash: window.location.hash,
+        title: (document.querySelector('[data-testid="iw-plan-title"]') || {}).textContent || '',
+        hasRename: Boolean(document.querySelector('[data-testid="iw-plan-rename"]')),
+        memberRows: document.querySelectorAll('[data-testid="iw-plan-members"] tbody tr').length,
+      }));
+      // 重命名：清空后键入新名
+      let renameOk67 = false;
+      let renamedTitle67 = '';
+      if (editPage67.hasRename) {
+        await page.evaluate(() => document.querySelector('[data-testid="iw-plan-rename"]').click());
+        await new Promise((r) => setTimeout(r, 500));
+        await page.focus('[data-testid="iw-plan-rename-input"]');
+        const curLen = await page.evaluate(() => (document.querySelector('[data-testid="iw-plan-rename-input"]') || {}).value.length || 0);
+        for (let i = 0; i < curLen + 2; i += 1) await page.keyboard.press('Backspace');
+        await page.keyboard.type('冒烟v67改名');
+        await new Promise((r) => setTimeout(r, 300));
+        await page.evaluate(() => {
+          const dlg = document.querySelector('[role="dialog"]');
+          if (!dlg) return;
+          const btn = Array.from(dlg.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '保存');
+          if (btn) btn.click();
+        });
+        await new Promise((r) => setTimeout(r, 700));
+        renamedTitle67 = await page.evaluate(() => (document.querySelector('[data-testid="iw-plan-title"]') || {}).textContent || '');
+        renameOk67 = renamedTitle67.includes('冒烟v67改名');
+      }
+      record('v6.7-6 模块「编辑」进入清单管理页并可重命名（只改名称）',
+        editPage67.hash.includes(`#/plan/${newPlanId67}`)
+          && editPage67.title.includes('冒烟v67清单')
+          && editPage67.memberRows === 2
+          && renameOk67,
+        `hash=${editPage67.hash}，标题=「${editPage67.title}」，成员行=${editPage67.memberRows}，重命名后标题=「${renamedTitle67}」`);
+
+      // 需求 6：拖拽清单顺序（把新清单拖到第一份清单的位置）
+      await navHash('#/plans');
+      const orderBefore = (await cachePlans()).map((p) => p.id);
+      const targetPlanId = orderBefore.find((id) => id !== newPlanId67);
+      const movedTo67 = orderBefore.indexOf(targetPlanId);
+      const expectedOrder = orderBefore.slice();
+      expectedOrder.splice(expectedOrder.indexOf(newPlanId67), 1);
+      expectedOrder.splice(movedTo67, 0, newPlanId67);
+      await dragAndDrop(`[data-testid="iw-plan-drag-${newPlanId67}"]`, `[data-testid="iw-plan-card-body-${targetPlanId}"]`);
+      const orderAfter = (await cachePlans()).map((p) => p.id);
+      record('v6.7-7 拖拽清单模块调整排列顺序（顺序写回清单数据）',
+        JSON.stringify(orderAfter) === JSON.stringify(expectedOrder),
+        `拖前=[${orderBefore.join('>')}]，期望=[${expectedOrder.join('>')}]，实际=[${orderAfter.join('>')}]`);
+
+      // 需求 7：拖拽清单内记录顺序（两条成员互换）
+      const membersBefore = ((await cachePlans()).find((p) => p.id === newPlanId67) || { members: [] }).members;
+      const bodyVisible67 = await page.evaluate((pid) => Boolean(document.querySelector(`[data-testid="iw-plan-card-body-${pid}"]`)), newPlanId67);
+      if (bodyVisible67 && membersBefore.length === 2) {
+        await dragAndDrop(
+          `[data-testid="iw-plan-card-row-${newPlanId67}-${membersBefore[0]}"]`,
+          `[data-testid="iw-plan-card-row-${newPlanId67}-${membersBefore[1]}"]`,
+        );
+        const membersAfter = ((await cachePlans()).find((p) => p.id === newPlanId67) || { members: [] }).members;
+        record('v6.7-8 拖拽清单内记录调整记录顺序',
+          JSON.stringify(membersAfter) === JSON.stringify([membersBefore[1], membersBefore[0]]),
+          `拖前=${JSON.stringify(membersBefore)}，实际=${JSON.stringify(membersAfter)}`);
+      } else {
+        record('v6.7-8 拖拽清单内记录调整记录顺序', false, `模块不可见=${!bodyVisible67}，成员数=${membersBefore.length}`);
+      }
+
+      // 需求 5：删除 —— 二次确认，只解除关联不删记录
+      const countsBeforeDel = await cacheCounts();
+      await page.evaluate((pid) => {
+        const b = document.querySelector(`[data-testid="iw-plan-delete-${pid}"]`);
+        if (b) b.click();
+      }, newPlanId67);
+      await new Promise((r) => setTimeout(r, 600));
+      const delDialog67 = await page.evaluate(() => {
+        const dlg = document.querySelector('[role="dialog"]');
+        return dlg ? (dlg.textContent || '') : '';
+      });
+      await page.evaluate(() => {
+        const dlg = document.querySelector('[role="dialog"]');
+        if (!dlg) return;
+        const btn = Array.from(dlg.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '删除清单');
+        if (btn) btn.click();
+      });
+      await new Promise((r) => setTimeout(r, 800));
+      const afterDel67 = await cacheCounts();
+      const stillThere67 = (await cachePlans()).some((p) => p.id === newPlanId67);
+      record('v6.7-9 模块「删除」二次确认，只解除关联（清单消失、记录数不变）',
+        delDialog67.includes('只解除记录关联') && delDialog67.includes('不会被删除或修改')
+          && !stillThere67
+          && afterDel67.records === countsBeforeDel.records
+          && afterDel67.plans === countsBeforeDel.plans - 1,
+        `确认文案含「只解除记录关联」=${delDialog67.includes('只解除记录关联')}，清单已删除=${!stillThere67}，记录数 ${afterDel67.records}（原 ${countsBeforeDel.records}），清单数 ${afterDel67.plans}（原 ${countsBeforeDel.plans}）`);
+    }
+
+    await navHash('#/list');
+
     /* ---------------- v6.2.1 表单里的计划清单入口（浏览器逐项验证） ---------------- */
     // 需求 1/2：新增表单勾选清单 → 保存后成员写入 → 按清单筛选命中；
     //           编辑表单取消勾选 → 即时生效 → 筛选不再命中。此时「2026 春季」已有 1 名成员（v6.2-3 加入的 joinTarget）。

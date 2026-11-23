@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import type { Filters, SortKey, SortSpec } from './types';
 import { EMPTY_FILTERS } from './types';
 
-export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'editor' | 'plan';
+export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'editor' | 'plan' | 'plans';
 
 export interface Route {
   view: ViewName;
@@ -85,6 +85,7 @@ export function parseHash(hash: string): Route {
   else if (seg[0] === 'dashboard') view = 'dashboard';
   else if (seg[0] === 'settings') { view = 'settings'; settingsTab = seg[1] ?? null; }
   else if (seg[0] === 'plan') { view = 'plan'; planId = seg[1] ?? null; }
+  else if (seg[0] === 'plans') view = 'plans';
   else if (seg[0] === 'editor') { view = 'editor'; id = seg[1] && seg[1] !== 'new' ? Number(seg[1]) || null : null; }
 
   // v6（需求 4）：默认排序改为「名称升序」（中文按拼音）；显式带参数时以参数为准。

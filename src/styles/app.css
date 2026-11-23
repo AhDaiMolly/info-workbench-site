@@ -676,3 +676,63 @@
   border-color: var(--iw-primary, #2563eb);
   color: #fff;
 }
+
+/* ---------------- v6.7：计划清单总览（一级页签「清单」） ---------------- */
+.iw-plans-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--iw-s4);
+  align-items: start;
+}
+.iw-plan-card {
+  background: var(--iw-surface, #fff);
+  border: 1px solid var(--iw-border, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.iw-plan-card-over { outline: 2px dashed var(--iw-primary, #2563eb); outline-offset: -2px; }
+.iw-plan-card-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--iw-border, #e5e7eb);
+  background: var(--iw-surface-2, #f8fafc);
+}
+.iw-plan-handle {
+  cursor: grab; user-select: none; color: var(--iw-text-3, #94a3b8);
+  font-size: 15px; line-height: 1; padding: 2px 3px;
+}
+.iw-plan-handle:active { cursor: grabbing; }
+.iw-plan-card-title {
+  font-size: 14px; font-weight: 600; margin: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.iw-plan-card-count { font-size: 12px; color: var(--iw-text-3, #94a3b8); flex: 0 0 auto; }
+.iw-plan-card-actions { margin-left: auto; display: flex; gap: 4px; flex: 0 0 auto; }
+.iw-plan-card-body { padding: 8px 12px 12px; min-height: 48px; }
+.iw-plan-members { list-style: none; margin: 0; padding: 0; }
+.iw-plan-member {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 6px; border-radius: 6px; cursor: pointer;
+}
+.iw-plan-member:hover { background: var(--iw-surface-2, #f8fafc); }
+.iw-plan-member-over { outline: 2px dashed var(--iw-primary, #2563eb); outline-offset: -2px; }
+.iw-plan-member-id { color: var(--iw-text-3, #94a3b8); font-size: 12px; flex: 0 0 auto; }
+.iw-plan-member-name {
+  flex: 1 1 auto; min-width: 0; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.iw-plan-member-brand { color: var(--iw-text-3, #94a3b8); font-size: 12px; flex: 0 0 auto; }
+.iw-plan-picker {
+  max-height: 260px; overflow-y: auto;
+  border: 1px solid var(--iw-border, #e5e7eb); border-radius: 6px; padding: 6px;
+}
+.iw-plan-pick {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 4px 6px; border: 1px solid transparent; border-radius: 6px;
+  background: none; cursor: pointer; text-align: left;
+}
+.iw-plan-pick:hover { background: var(--iw-surface-2, #f8fafc); }
+.iw-plan-pick-on { border-color: var(--iw-primary, #2563eb); background: var(--iw-surface-2, #f8fafc); }
+@media (max-width: 820px) {
+  .iw-plans-grid { grid-template-columns: minmax(0, 1fr); }
+}
