@@ -13,6 +13,7 @@ import { useApp } from '../../store/store';
 import { findShellRecords } from '../../store/migrations';
 import { Modal } from '../../components/Modal';
 import { BUILD_INFO, buildInfoText, buildDateText } from '../../version';
+import { navigate } from '../../router';
 import { SIZE_MANAGED_KEYS } from '../../store/options';
 
 /** v6.4（需求 2）：设置页二级导航分组 —— 设置项按类别归组，点导航只渲染当前分组的卡片。
@@ -27,7 +28,7 @@ const SETTINGS_GROUPS: Array<{ id: SettingsGroupId; label: string }> = [
   { id: 'version', label: '版本信息' },
 ];
 
-export function SettingsView() {
+export function SettingsView({ initialGroup }: { initialGroup?: SettingsGroupId } = {}) {
   const app = useApp();
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
@@ -44,8 +45,11 @@ export function SettingsView() {
   const [optionDeleteTarget, setOptionDeleteTarget] = useState<{
     fieldKey: string; fieldLabel: string; value: string; usage: number;
   } | null>(null);
-  // v6.4（需求 2）：设置二级导航当前分组
-  const [activeGroup, setActiveGroup] = useState<SettingsGroupId>('connection');
+  // v6.4（需求 2）：设置二级导航当前分组；v6.6：支持 /settings/<组名> 锚点直达（如列表筛选面板的「管理清单」入口）
+  const [activeGroup, setActiveGroup] = useState<SettingsGroupId>(initialGroup ?? 'connection');
+  useEffect(() => {
+    if (initialGroup) setActiveGroup(initialGroup);
+  }, [initialGroup]);
 
   useEffect(() => {
     if (app.config) {
@@ -347,6 +351,15 @@ export function SettingsView() {
                   {plan.名称}
                   <span className="iw-plan-count">（{plan.记录ID列表.length} 条）</span>
                 </span>
+                <button
+                  type="button"
+                  className="iw-btn iw-btn-ghost"
+                  data-testid={`iw-plan-manage-${plan.id}`}
+                  aria-label={`管理清单成员：${plan.名称}`}
+                  onClick={() => navigate({ view: 'plan', planId: plan.id })}
+                >
+                  管理
+                </button>
                 <button
                   type="button"
                   className="iw-btn iw-btn-ghost"

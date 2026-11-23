@@ -90,15 +90,15 @@ describe('内置 schema', () => {
 });
 
 describe('列表默认列（v6.5 口径）', () => {
-  it('默认 9 列：名称 / 品牌 / 分类 / 款式 / 季节 / 电子 / 纸质 / 教程 / 做过', () => {
+  it('默认 10 列：名称 / 品牌 / 分类 / 款式 / 季节 / 清单 / 电子 / 纸质 / 教程 / 做过', () => {
     expect(DEFAULT_VISIBLE_COLUMNS).toEqual([
-      '名称', '品牌', '分类', '款式', '季节', '电子', '纸质', '教程', '做过',
+      '名称', '品牌', '分类', '款式', '季节', '清单', '电子', '纸质', '教程', '做过',
     ]);
-    expect(DEFAULT_VISIBLE_COLUMNS.length).toBe(9);
+    expect(DEFAULT_VISIBLE_COLUMNS.length).toBe(10);
   });
 
-  it('v6.5（需求 9）：派生列由「形态」拆成「电子」「纸质」两列', () => {
-    expect(DERIVED_LIST_COLUMNS).toEqual(['电子', '纸质']);
+  it('v6.5（需求 9）：派生列由「形态」拆成「电子」「纸质」两列；v6.6 新增派生列「清单」', () => {
+    expect(DERIVED_LIST_COLUMNS).toEqual(['电子', '纸质', '清单']);
     const keys = DEFAULT_SCHEMA.fields.map((f) => f.key);
     expect(keys).not.toContain('形态');
     expect(keys).not.toContain('标记');

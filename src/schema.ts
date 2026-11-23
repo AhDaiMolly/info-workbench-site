@@ -206,7 +206,7 @@ export const LEGACY_ESIZE_GROUP_MAP: Record<string, string[]> = {
  * v6.5 把「形态」拆成「电子」「纸质」两列；
  * 「做过」改为直接展示数据字段（打勾 / 留空），不再是派生列。
  */
-export const DERIVED_LIST_COLUMNS = ['电子', '纸质'];
+export const DERIVED_LIST_COLUMNS = ['电子', '纸质', '清单'];
 
 /**
  * v6.1（需求 2 / 3）：被改名替换掉的旧键。
@@ -297,7 +297,7 @@ export function mergeSchema(base: Schema, remote: Partial<Schema> | null | undef
  * 其余字段（尺码、备注、创建/更新时间）收进详情页；筛选器保留可用字段。
  */
 export const DEFAULT_VISIBLE_COLUMNS = [
-  '名称', '品牌', '分类', '款式', '季节', '电子', '纸质', '教程', '做过',
+  '名称', '品牌', '分类', '款式', '季节', '清单', '电子', '纸质', '教程', '做过',
 ];
 
 /**

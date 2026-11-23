@@ -14,6 +14,7 @@ import { useMemo, useState } from 'react';
 import type { Filters, Schema } from '../../types';
 import { EMPTY_FILTERS } from '../../types';
 import { hasActiveFilters } from '../../store/selectors';
+import { navigate } from '../../router';
 import {
   OWNERSHIP_ANY, OWNERSHIP_NONE, OWNERSHIP_FORMAT_OPTIONS, PAPER_SIZE_LETTER_TAGS, PAPER_SIZE_HEIGHT_TAGS,
 } from '../../schema';
@@ -223,9 +224,33 @@ export function FilterPanel(props: Props) {
                       </button>
                     );
                   })}
+                  {/* v6.6（需求 1）：清单管理入口 —— 选中某份清单时直达该清单管理页，否则去设置页清单组 */}
+                  <button
+                    type="button"
+                    className="iw-chip"
+                    data-testid="iw-filter-manage-plans"
+                    onClick={() => {
+                      const list = (filters.计划清单 as string[]) ?? [];
+                      if (list.length === 1) navigate({ view: 'plan', planId: list[0] });
+                      else navigate({ view: 'settings', settingsTab: 'plans' });
+                    }}
+                  >
+                    ⚙ 管理清单…
+                  </button>
                 </div>
               ) : (
-                <div className="iw-cell-muted">还没有计划清单（可在「设置 › 计划清单」创建）</div>
+                <div className="iw-cell-muted">
+                  还没有计划清单（可在「设置 › 计划清单」创建）
+                  <button
+                    type="button"
+                    className="iw-btn iw-btn-sm iw-btn-ghost"
+                    style={{ marginLeft: 8 }}
+                    data-testid="iw-filter-goto-plans"
+                    onClick={() => navigate({ view: 'settings', settingsTab: 'plans' })}
+                  >
+                    去创建
+                  </button>
+                </div>
               )}
             </div>
             {boolGroup('做过', '做过')}

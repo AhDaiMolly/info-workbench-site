@@ -57,24 +57,29 @@ export function truncateTags(values: unknown, max = 2): { shown: string[]; extra
 }
 
 /**
- * v6.5（需求 8）：列表行标注色。
+ * 列表行标注色（v6.5 需求 8 引入；v6.6 把「清单」纳入口径）。
  *
- *   · 分类 / 款式 / 季节 任一为空 → 浅灰（incomplete）
- *   · 三者都有值、但拥有形态为空 → 浅黄（noformat）
- *   · 灰优先于黄：两条规则互不叠加（分类/款式/季节有缺项时只看灰色）
+ *   · 浅灰（incomplete）：分类 / 款式 / 季节 任一为空；
+ *     —— 清单为空本身不单独触发灰，但「清单为空且分类/款式/季节也缺」自然落入灰。
+ *   · 浅黄（noformat）：分类 / 款式 / 季节都有值，但拥有形态或清单任一为空。
+ *   · 灰优先于黄：互不叠加。口径即需求原文「清单为空的记录至少会被标黄
+ *     （若分类/款式/季节也缺则标灰）」。
+ *
+ * hasPlan = 该记录至少属于一份计划清单；缺省 true（调用方无法提供清单信息时，
+ * 退化为 v6.5 的旧口径，仅看拥有形态）。
  */
 export type RowAnnotation = 'incomplete' | 'noformat' | null;
 
 export function rowAnnotation(r: {
   分类?: unknown; 款式?: unknown; 季节?: unknown; 拥有形态?: unknown;
-}): RowAnnotation {
+}, hasPlan: boolean = true): RowAnnotation {
   const catRaw = Array.isArray(r.分类) ? r.分类 : (r.分类 === undefined || r.分类 === null ? [] : [r.分类]);
   const catEmpty = catRaw.every((v) => String(v ?? '').trim() === '');
   const styleEmpty = String(r.款式 ?? '').trim() === '';
   const seasonEmpty = String(r.季节 ?? '').trim() === '';
   if (catEmpty || styleEmpty || seasonEmpty) return 'incomplete';
   const own = Array.isArray(r.拥有形态) ? r.拥有形态 : [];
-  if (own.length === 0) return 'noformat';
+  if (own.length === 0 || !hasPlan) return 'noformat';
   return null;
 }
 

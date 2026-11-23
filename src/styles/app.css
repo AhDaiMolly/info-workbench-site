@@ -369,6 +369,16 @@
 
 /* v6.5（需求 8）：列表行标注色 —— 分类/款式/季节任一为空 → 浅灰；三者齐全但拥有形态为空 → 浅黄。
    灰优先于黄（两规则互不叠加），配色克制，深色文字保持可读。 */
+/* v6.6（需求 2）：列表「清单」列 —— 多值紧凑展示，超宽省略号截断（title 悬浮看全量） */
+.iw-plans-cell {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
 .iw-table tbody tr.iw-row-incomplete { background: var(--iw-row-incomplete); }
 .iw-table tbody tr.iw-row-incomplete:hover { background: var(--iw-row-incomplete-hover); }
 .iw-table tbody tr.iw-row-noformat { background: var(--iw-row-noformat); }

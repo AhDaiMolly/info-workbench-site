@@ -49,9 +49,14 @@ export function ListView() {
     else app.actions.setSort({ key, dir: key === '名称' ? 'asc' : 'desc' });
   };
 
-  /** v6.5（需求 8）：行标注色 —— 信息不全（灰）优先于无拥有形态（黄），两规则互不叠加 */
+  /**
+   * 行标注色（v6.5 需求 8；v6.6 纳入清单口径）：
+   * 分类/款式/季节任一空 → 灰；三者齐但拥有形态或清单空 → 黄；灰优先。
+   * hasPlan 取自 store 的 planMembers（记录 → 所在清单集合）。
+   */
   const rowClass = (r: RecordItem): string | undefined => {
-    const a = rowAnnotation(r);
+    const hasPlan = (app.planMembers?.get(r.id)?.size ?? 0) > 0;
+    const a = rowAnnotation(r, hasPlan);
     if (a === 'incomplete') return 'iw-row-incomplete';
     if (a === 'noformat') return 'iw-row-noformat';
     return undefined;
@@ -83,6 +88,13 @@ export function ListView() {
       const icon = tutorialIcon(r.教程);
       if (!icon) return <span />;
       return <span className="iw-icon-cell-item" title={`教程：${String(r.教程 ?? '')}`}>{icon}</span>;
+    }
+    // v6.6（需求 2）：「清单」派生列 —— 该记录所在的全部清单（多值「、」连接），无清单留空
+    if (col === '清单') {
+      const names = app.plans.filter((p) => p.记录ID列表.includes(r.id)).map((p) => p.名称);
+      if (!names.length) return <span />;
+      const text = names.join('、');
+      return <span className="iw-plans-cell" title={text}>{text}</span>;
     }
     // v6.4（bug 修复）：未拥有对应形态时，尺码列留空（不再是「—」）；拥有但未填才走下方通用空态「—」
     if (col === '电子版尺码' && !(r.拥有形态 ?? []).includes('电子版')) return <span />;

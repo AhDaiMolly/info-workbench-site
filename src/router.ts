@@ -9,12 +9,16 @@ import { useEffect, useState } from 'react';
 import type { Filters, SortKey, SortSpec } from './types';
 import { EMPTY_FILTERS } from './types';
 
-export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'editor';
+export type ViewName = 'list' | 'detail' | 'dashboard' | 'settings' | 'editor' | 'plan';
 
 export interface Route {
   view: ViewName;
   /** 详情 / 编辑的记录 ID */
   id: number | null;
+  /** v6.6：清单管理视图的目标清单 ID（如 p1） */
+  planId: string | null;
+  /** v6.6：设置页二级导航锚点（如 /settings/plans 直达「计划清单」组） */
+  settingsTab: string | null;
   filters: Filters;
   query: string;
   sort: SortSpec;
@@ -74,10 +78,13 @@ export function parseHash(hash: string): Route {
 
   let view: ViewName = 'list';
   let id: number | null = null;
+  let planId: string | null = null;
+  let settingsTab: string | null = null;
 
   if (seg[0] === 'detail') { view = 'detail'; id = Number(seg[1]) || null; }
   else if (seg[0] === 'dashboard') view = 'dashboard';
-  else if (seg[0] === 'settings') view = 'settings';
+  else if (seg[0] === 'settings') { view = 'settings'; settingsTab = seg[1] ?? null; }
+  else if (seg[0] === 'plan') { view = 'plan'; planId = seg[1] ?? null; }
   else if (seg[0] === 'editor') { view = 'editor'; id = seg[1] && seg[1] !== 'new' ? Number(seg[1]) || null : null; }
 
   // v6（需求 4）：默认排序改为「名称升序」（中文按拼音）；显式带参数时以参数为准。
@@ -87,6 +94,8 @@ export function parseHash(hash: string): Route {
   return {
     view,
     id,
+    planId,
+    settingsTab,
     filters: parseFilters(params),
     query: params.get('q') ?? '',
     sort: { key: sortKey, dir: sortDir },
@@ -118,7 +127,9 @@ export function buildHash(route: Partial<Route> & { view: ViewName }): string {
   const base = route.view === 'list' ? '/list'
     : route.view === 'detail' ? `/detail/${route.id ?? ''}`
       : route.view === 'editor' ? `/editor/${route.id ?? 'new'}`
-        : `/${route.view}`;
+        : route.view === 'plan' ? `/plan/${route.planId ?? ''}`
+          : route.view === 'settings' ? `/settings${route.settingsTab ? `/${route.settingsTab}` : ''}`
+            : `/${route.view}`;
   const qs = params.toString();
   return `#${base}${qs ? `?${qs}` : ''}`;
 }

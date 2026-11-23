@@ -427,6 +427,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       sort: state.sort,
       pageSize: state.pageSize,
       presets: state.presets,
+      colsv: 1,
     });
   }, [state.visibleColumns, state.sort, state.pageSize, state.presets]);
 

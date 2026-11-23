@@ -10,6 +10,7 @@ import { DetailView } from './features/detail/DetailView';
 import { EditorForm } from './features/editor/EditorForm';
 import { DashboardView } from './features/dashboard/DashboardView';
 import { SettingsView } from './features/settings/SettingsView';
+import { PlanView } from './features/plan/PlanView';
 import { Modal } from './components/Modal';
 import { APP_NAME } from './schema';
 import { findShellRecords } from './store/migrations';
@@ -190,7 +191,9 @@ export function App() {
         {route.view === 'detail' ? <DetailView id={route.id} /> : null}
         {route.view === 'editor' ? <EditorForm recordId={route.id} /> : null}
         {route.view === 'dashboard' ? <DashboardView /> : null}
-        {route.view === 'settings' ? <SettingsView /> : null}
+        {route.view === 'settings' ? <SettingsView initialGroup={route.settingsTab === 'plans' ? 'plans' : undefined} /> : null}
+        {/* v6.6（需求 1）：单个清单的管理视图（添加 / 移除只改成员关系） */}
+        {route.view === 'plan' ? <PlanView planId={route.planId} /> : null}
       </main>
 
       <Modal

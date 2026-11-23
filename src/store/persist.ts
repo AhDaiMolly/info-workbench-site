@@ -408,6 +408,8 @@ export interface Prefs {
   sort: SortSpec;
   pageSize: number;
   presets: FilterPreset[];
+  /** 列偏好迁移标记：1 = v6.6 已把「清单」列插入旧偏好（此后用户移除不再复活） */
+  colsv?: number;
 }
 
 export function readPrefs(): Partial<Prefs> {
@@ -415,6 +417,14 @@ export function readPrefs(): Partial<Prefs> {
   // v3：列名与筛选方案里的旧字段名统一改名，已删除字段剔除
   // v5：列表列「电子版 / 纸质版」并入派生列「形态」；旧的两个单选筛选并入「拥有形态」多选
   if (raw.columns) raw.columns = normalizeColumns(raw.columns);
+  // v6.6：老偏好一次性插入新「清单」列（插在「季节」后），colsv 标记保证只迁移一次 ——
+  // 用户之后手动取消勾选该列，下次加载也不会被复活。
+  if (raw.columns && raw.columns.length && (raw.colsv ?? 0) < 1 && !raw.columns.includes('清单')) {
+    const at = raw.columns.indexOf('季节');
+    if (at >= 0) raw.columns.splice(at + 1, 0, '清单');
+    else raw.columns.push('清单');
+    raw.colsv = 1;
+  }
   if (raw.presets) {
     raw.presets = raw.presets.map((p) => ({
       ...p,

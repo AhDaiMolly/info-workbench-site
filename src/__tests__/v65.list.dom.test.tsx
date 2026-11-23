@@ -30,6 +30,7 @@ const { recordsHolder, stateHolder, setQueryMock } = vi.hoisted(() => {
 
 vi.mock('../store/store', async () => {
   const { DEFAULT_SCHEMA } = await vi.importActual<typeof import('../schema')>('../schema');
+  const { buildPlanMembers } = await vi.importActual<typeof import('../store/plans')>('../store/plans');
   return {
     useApp: () => ({
     records: recordsHolder.records,
@@ -41,14 +42,14 @@ vi.mock('../store/store', async () => {
     pageSize: 50,
     pending: [],
     indexes: undefined,
-    planMembers: undefined,
+    planMembers: buildPlanMembers([{ id: 'p1', 名称: '回归清单', 记录ID列表: [1], 创建时间: '2026-11-01T00:00:00.000Z', 更新时间: '2026-11-01T00:00:00.000Z' }]),
     schema: DEFAULT_SCHEMA,
     optionCandidates: { 品牌: ['晨雾'], 款式: ['外套'], 电子版尺码: ['M'], 纸质版尺码: ['M'] },
     conflicts: [],
     suggestions: [],
     ignoredChecks: [],
     presets: [],
-    plans: [],
+    plans: [{ id: 'p1', 名称: '回归清单', 记录ID列表: [1], 创建时间: '2026-11-01T00:00:00.000Z', 更新时间: '2026-11-01T00:00:00.000Z' }],
     actions: {
       setSort: vi.fn(),
       setQuery: setQueryMock,

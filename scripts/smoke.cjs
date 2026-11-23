@@ -1352,8 +1352,12 @@ function apiPayload(name, buf) {
         // 同步写回 plans.json（PUT 拦截）
         await goto('#/settings');
         const putBeforePlans = putCount;
+        const putStartIdx26 = putUrls.length;
         await clickByText('同步到 GitHub', '.iw-main');
-        await waitFor(async () => putCount > putBeforePlans, 12000);
+        // 等目标文件自己的 PUT（同步链是 records→plans→options 串行，
+        // 只等 putCount 增长会在 records PUT 与 plans PUT 之间提前扫描 → 假失败）
+        await waitFor(async () => putUrls.slice(putStartIdx26).some((u) => u.includes('plans.json')), 15000);
+        await new Promise((r) => setTimeout(r, 300));
         const syncTextPlans = await page.evaluate(() => document.body.innerText.slice(0, 2000));
         let plansPutOk = false;
         let plansPutMsg = `未捕获 plans.json PUT；api尾部=[${apiHits.slice(-8).join(' | ')}]；同步状态=「${(syncTextPlans.match(/(同步|拉取|备份)[^\n]{0,80}/) || [''])[0]}」`;
@@ -1371,6 +1375,166 @@ function apiPayload(name, buf) {
         record('v6.2-6 同步把计划清单写回数据仓（PUT plans.json 含清单与成员）', plansPutOk, plansPutMsg);
       } else {
         record('v6.2-3 详情页计划清单 chip 存在', false, '未找到清单 chip');
+      }
+    }
+
+    /* ---------------- v6.6 清单管理页 + 列表「清单」列 + 标注色新口径 ---------------- */
+    // 需求 1：设置页「管理」入口 → 进入清单管理页 → 移除出清单 → 同步（只动 plans.json）→ 搜索加回
+    const joinTarget66 = allFile.records.find((r) => String(r['名称'] || '').trim());
+    await goto('#/settings');
+    await navTo('plans');
+    const manageClicked = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('[data-testid="iw-plan-row"]'));
+      const row = rows.find((r) => (r.textContent || '').includes('2026 春季'));
+      if (!row) return false;
+      const btn = row.querySelector('button[data-testid^="iw-plan-manage-"]');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    const planView = await page.evaluate(() => ({
+      hash: window.location.hash,
+      title: (document.querySelector('[data-testid="iw-plan-title"]') || {}).textContent || '',
+      members: document.querySelectorAll('[data-testid="iw-plan-members"] tbody tr').length,
+      copy: document.body.innerText.includes('只调整清单成员关系'),
+    }));
+    record('v6.6-1 设置页「管理」进入清单管理页（标题/成员数/文案）',
+      manageClicked && planView.hash.includes('#/plan/')
+        && planView.title.includes('清单管理：2026 春季')
+        && planView.members === 1
+        && planView.copy,
+      `hash=${planView.hash}，标题=「${planView.title}」，成员 ${planView.members} 条，成员关系文案=${planView.copy}`);
+
+    if (planView.hash.includes('#/plan/')) {
+      // 移除出清单：只清成员关系，记录本身不动
+      const recordsBefore66 = await page.evaluate(() => JSON.parse(localStorage.getItem('iw.cache') || '{}').records.length);
+      await page.click(`[data-testid="iw-plan-remove-${joinTarget66.id}"]`);
+      await new Promise((r) => setTimeout(r, 700));
+      const afterRemove = await page.evaluate((rid) => {
+        const c = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+        const plan = (c.plans || []).find((p) => p['名称'] === '2026 春季');
+        return {
+          memberRows: document.querySelectorAll('[data-testid="iw-plan-members"] tbody tr').length,
+          recordsN: c.records.length,
+          recordAlive: (c.records || []).some((r) => r.id === rid),
+          members: plan ? plan['记录ID列表'] : null,
+          hasJoinBack: Boolean(document.querySelector(`[data-testid="iw-plan-add-${rid}"]`)),
+        };
+      }, joinTarget66.id);
+      record('v6.6-2 移除出清单：成员清空、记录仍在、出现在候选里',
+        afterRemove.memberRows === 0
+          && afterRemove.recordsN === recordsBefore66
+          && afterRemove.recordAlive
+          && Array.isArray(afterRemove.members) && afterRemove.members.length === 0
+          && afterRemove.hasJoinBack,
+        `成员行=${afterRemove.memberRows}，记录数=${afterRemove.recordsN}/${recordsBefore66}，记录存在=${afterRemove.recordAlive}，清单成员表=${JSON.stringify(afterRemove.members)}`);
+
+      // 同步：本次只应写 plans.json（成员被移除），records.json 零改动
+      // 同步按钮在设置页（连接分组），清单管理页没有 → 先回设置页再点
+      const putStart66 = putUrls.length;
+      await goto('#/settings');
+      await new Promise((r) => setTimeout(r, 400));
+      await clickByText('同步到 GitHub', '.iw-main');
+      await waitFor(async () => putUrls.slice(putStart66).some((u) => u.includes('plans.json')), 15000);
+      await new Promise((r) => setTimeout(r, 300));
+      let plansPut66 = null;
+      let recordsPut66 = null;
+      for (let i = putStart66; i < putUrls.length; i += 1) {
+        try {
+          const body = JSON.parse(putBodies[i] || '{}');
+          const decoded = JSON.parse(Buffer.from(body.content || '', 'base64').toString('utf8'));
+          if (putUrls[i].includes('plans.json') && decoded.plans) plansPut66 = decoded;
+          if (putUrls[i].includes('records.json') && decoded.records) recordsPut66 = decoded;
+        } catch (e) { /* skip */ }
+      }
+      const canon = (recs) => JSON.stringify((recs || []).slice().sort((a, b) => a.id - b.id)
+        .map((r) => { const o = {}; for (const k of Object.keys(r).sort()) o[k] = r[k]; return o; }));
+      const plansPutOk66 = plansPut66
+        && plansPut66.plans.some((pl) => pl['名称'] === '2026 春季' && !(pl['记录ID列表'] || []).includes(joinTarget66.id));
+      const recordsOk66 = recordsPut66 === null || canon(recordsPut66.records) === canon(allFile.records);
+      record('v6.6-3 同步只改 plans.json 成员关系（records.json 零改动）',
+        Boolean(plansPutOk66) && recordsOk66,
+        `plans.json PUT=${plansPutOk66 ? '成员已移除' : (plansPut66 ? '内容不符' : '未捕获')}，records.json PUT=${recordsPut66 === null ? '未发生（无改动不写）' : (recordsOk66 ? '内容与初始完全一致' : '内容发生了变化！')}`);
+
+      // 搜索 #编号 把记录加回清单（回到管理页）
+      await goto(planView.hash);
+      await page.focus('[data-testid="iw-plan-add-search"]');
+      await page.keyboard.type(`#${joinTarget66.id}`);
+      await new Promise((r) => setTimeout(r, 300));
+      const candidateVisible = await page.evaluate((rid) => Boolean(document.querySelector(`[data-testid="iw-plan-add-${rid}"]`)), joinTarget66.id);
+      await page.click(`[data-testid="iw-plan-add-${joinTarget66.id}"]`);
+      await new Promise((r) => setTimeout(r, 700));
+      const afterAdd = await page.evaluate((rid) => {
+        const c = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+        const plan = (c.plans || []).find((p) => p['名称'] === '2026 春季');
+        return {
+          memberRows: document.querySelectorAll('[data-testid="iw-plan-members"] tbody tr').length,
+          members: plan ? plan['记录ID列表'] : null,
+          recordsN: c.records.length,
+        };
+      }, joinTarget66.id);
+      record('v6.6-4 搜索 #编号 加回清单（成员恢复，记录数不变）',
+        candidateVisible && afterAdd.memberRows === 1
+          && Array.isArray(afterAdd.members) && afterAdd.members.includes(joinTarget66.id)
+          && afterAdd.recordsN === recordsBefore66,
+        `候选可见=${candidateVisible}，成员行=${afterAdd.memberRows}，成员表=${JSON.stringify(afterAdd.members)}，记录数=${afterAdd.recordsN}`);
+    }
+
+    // 需求 2：列表新增「清单」列（默认列集、多值展示、无清单留空）
+    await goto('#/list');
+    const headers66 = await page.evaluate(() => Array.from(document.querySelectorAll('.iw-table thead th')).map((th) => (th.textContent || '').replace('↑', '').replace('↓', '').trim()));
+    const colIdx66 = headers66.indexOf('清单');
+    record('v6.6-5 列表默认显示「清单」列', colIdx66 >= 0, `表头=[${headers66.join(' | ')}]`);
+
+    if (colIdx66 >= 0) {
+      // joinTarget 行：清单单元格含「2026 春季」（可能多值「、」连接）
+      await goto(`#/list?q=${encodeURIComponent(String(joinTarget66['名称'] || ''))}`);
+      const rowOf = (rid) => page.evaluate((id, ci) => {
+        const rows = Array.from(document.querySelectorAll('.iw-table tbody tr'));
+        const row = rows.find((tr) => {
+          const a = tr.querySelector('td a');
+          return a && a.getAttribute('href') === `#/detail/${id}`;
+        });
+        if (!row) return null;
+        const cell = row.children[ci];
+        return { cls: row.className, cell: cell ? (cell.textContent || '') : null, title: cell && cell.querySelector('.iw-plans-cell') ? cell.querySelector('.iw-plans-cell').getAttribute('title') : null };
+      }, rid, colIdx66);
+      const joinRow = await rowOf(joinTarget66.id);
+      record('v6.6-6 清单列多值展示：该行含「2026 春季」',
+        Boolean(joinRow) && (joinRow.cell || '').includes('2026 春季'),
+        `单元格=「${joinRow ? joinRow.cell : '行未找到'}」，title=「${joinRow ? joinRow.title : ''}」`);
+
+      // 标注色新口径：从 fixture 推导期望（避免硬编码线上数据）
+      const plansSnapshot = await page.evaluate(() => {
+        const c = JSON.parse(localStorage.getItem('iw.cache') || '{}');
+        return (c.plans || []).map((p) => p['记录ID列表'] || []);
+      });
+      const memberIds66 = new Set();
+      for (const list of plansSnapshot) for (const id of list) memberIds66.add(id);
+      const nonEmpty = (v) => (Array.isArray(v) ? v.some((x) => String(x ?? '').trim() !== '') : String(v ?? '').trim() !== '');
+      const hasOwn = (r) => Array.isArray(r['拥有形态']) && r['拥有形态'].length > 0;
+      // 无清单 + 三者齐 + 有形态 → 至少浅黄（新规则）
+      const rA = allFile.records.find((r) => nonEmpty(r['分类']) && nonEmpty(r['款式']) && nonEmpty(r['季节']) && hasOwn(r) && !memberIds66.has(r.id));
+      // 三要素有缺（无论清单）→ 浅灰（灰优先）
+      const rB = allFile.records.find((r) => (!nonEmpty(r['分类']) || !nonEmpty(r['款式']) || !nonEmpty(r['季节'])) && !memberIds66.has(r.id));
+      if (rA) {
+        await goto(`#/list?q=${encodeURIComponent(String(rA['名称'] || ''))}`);
+        const rowA = await rowOf(rA.id);
+        record('v6.6-7 无清单且信息齐全 → 至少浅黄（iw-row-noformat）',
+          Boolean(rowA) && (rowA.cls || '').includes('iw-row-noformat') && !(rowA.cls || '').includes('iw-row-incomplete'),
+          `#${rA.id}「${rA['名称']}」行 class=「${rowA ? rowA.cls : '行未找到'}」，清单单元格=「${rowA ? rowA.cell : ''}」`);
+      } else {
+        record('v6.6-7 无清单且信息齐全 → 至少浅黄（iw-row-noformat）', false, 'fixture 中找不到「三者齐+有形态+无清单」的样本');
+      }
+      if (rB) {
+        await goto(`#/list?q=${encodeURIComponent(String(rB['名称'] || ''))}`);
+        const rowB = await rowOf(rB.id);
+        record('v6.6-8 信息不全 → 浅灰优先（iw-row-incomplete）',
+          Boolean(rowB) && (rowB.cls || '').includes('iw-row-incomplete'),
+          `#${rB.id}「${rB['名称']}」行 class=「${rowB ? rowB.cls : '行未找到'}」`);
+      } else {
+        record('v6.6-8 信息不全 → 浅灰优先（iw-row-incomplete）', false, 'fixture 中找不到三要素有缺的样本');
       }
     }
 
@@ -1612,8 +1776,11 @@ function apiPayload(name, buf) {
     await goto('#/settings');
     await new Promise((r) => setTimeout(r, 400));
     const putBeforeOptions = putCount;
+    const putStartIdx36 = putUrls.length;
     await clickByText('同步到 GitHub', '.iw-main');
-    await waitFor(async () => putCount > putBeforeOptions, 12000);
+    // 等目标文件自己的 PUT（见 v6.2-6 同款竞态说明：只等 putCount 会提前扫描）
+    await waitFor(async () => putUrls.slice(putStartIdx36).some((u) => u.includes('options.json')), 15000);
+    await new Promise((r) => setTimeout(r, 300));
     const syncTextOptions = await page.evaluate(() => document.body.innerText.slice(0, 2000));
     let optionsPutOk = false;
     let optionsPutMsg = `未捕获 options.json PUT；api尾部=[${apiHits.slice(-8).join(' | ')}]；同步状态=「${(syncTextOptions.match(/(同步|拉取|备份)[^\n]{0,80}/) || [''])[0]}」`;
