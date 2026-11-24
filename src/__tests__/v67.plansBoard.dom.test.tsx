@@ -238,7 +238,7 @@ describe('v6.7 · 拖拽排序', () => {
 
   it('拖拽清单内记录 → 回调 reorderPlanMembers（新的记录顺序）', () => {
     render(<PlansBoardView />);
-    const from = screen.getByTestId('iw-plan-card-row-p1-1');
+    const from = screen.getByTestId('iw-plan-member-drag-p1-1');
     const to = screen.getByTestId('iw-plan-card-row-p1-2');
     fireEvent.dragStart(from);
     fireEvent.dragOver(to);
@@ -248,8 +248,9 @@ describe('v6.7 · 拖拽排序', () => {
 
   it('拖到自身不触发回调', () => {
     render(<PlansBoardView />);
+    const handle = screen.getByTestId('iw-plan-member-drag-p1-1');
     const row = screen.getByTestId('iw-plan-card-row-p1-1');
-    fireEvent.dragStart(row);
+    fireEvent.dragStart(handle);
     fireEvent.dragOver(row);
     fireEvent.drop(row);
     expect(holder.reorderPlanMembers).not.toHaveBeenCalled();

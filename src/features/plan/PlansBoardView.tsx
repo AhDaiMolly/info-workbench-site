@@ -22,6 +22,13 @@
  *   · 需求 5：条目右键菜单新增「加入其他清单…」—— 迁移语义（加入目标并从当前移出）
  *   · 需求 6：移除 v6.8 的条目悬停「×」移除按钮（移出入口统一为右键菜单与「移出」按钮）
  *
+ * v6.9.2 变更（拖拽修复）：
+ *   · 拖拽只从明确手柄发起：模块手柄（⠿）与条目手柄（⠿）可拖，模块标题、条目名等
+ *     文本内容不再 draggable —— 按住文本拖动只做原生文本选择（可复制），不触发拖拽；
+ *   · 视图根节点捕获 dragstart：非手柄发起的拖拽（含选中文本的浏览器默认拖拽）
+ *     一律 preventDefault 取消，杜绝「松开鼠标以搜索文本」/ 弹搜索页；
+ *   · 模块整卡（含头部）都是落点，拖拽预览用整卡/整行快照（setDragImage）。
+ *
  * 所有写操作都只改 plans.json（清单与成员关系），绝不删除 / 修改记录本身。
  */
 
@@ -128,7 +135,16 @@ export function PlansBoardView() {
   }, [moveTarget, app.plans, recordById]);
 
   return (
-    <div data-testid="iw-plans-view">
+    <div
+      data-testid="iw-plans-view"
+      onDragStartCapture={(e) => {
+        // v6.9.2：本页签内只允许从明确手柄发起拖拽。模块标题 / 条目名等文本被按住拖动时，
+        // 浏览器会把选中文字当拖拽负载（松手触发「搜索文本」），这里统一 cancel 掉：
+        // 拖拽被取消，但文本选择仍然保留，可正常复制。
+        const t = e.target as HTMLElement | null;
+        if (!t || !t.closest('.iw-plan-handle, .iw-plan-member-handle')) e.preventDefault();
+      }}
+    >
       <div className="iw-page-head">
         <div>
           <h1 className="iw-page-title">计划清单</h1>
@@ -166,6 +182,22 @@ export function PlansBoardView() {
                 key={plan.id}
                 className={`iw-plan-card${isDragOver ? ' iw-plan-card-over' : ''}`}
                 data-testid={`iw-plan-card-${plan.id}`}
+                onDragOver={(e) => {
+                  if (!dragPlanId || dragPlanId === plan.id) return;
+                  e.preventDefault();
+                  e.dataTransfer && (e.dataTransfer.dropEffect = 'move');
+                  setDragOverPlanId(plan.id);
+                }}
+                onDragLeave={(e) => {
+                  const rt = e.relatedTarget as Node | null;
+                  if (rt && e.currentTarget.contains(rt)) return;
+                  if (dragOverPlanId === plan.id) setDragOverPlanId(null);
+                }}
+                onDrop={(e) => {
+                  if (!dragPlanId) return;
+                  e.preventDefault();
+                  onPlanDrop(plan.id);
+                }}
               >
                 <header className="iw-plan-card-head">
                   <span
@@ -175,7 +207,12 @@ export function PlansBoardView() {
                     title="拖动调整清单顺序"
                     onDragStart={(e) => {
                       setDragPlanId(plan.id);
-                      e.dataTransfer?.setData('text/plain', plan.id);
+                      if (e.dataTransfer) {
+                        e.dataTransfer.setData('text/plain', plan.id);
+                        e.dataTransfer.effectAllowed = 'move';
+                        // v6.9.2：拖拽预览显示整卡快照，而非只有手柄图标
+                        e.dataTransfer.setDragImage(e.currentTarget.closest('.iw-plan-card') ?? e.currentTarget, 24, 24);
+                      }
                     }}
                     onDragEnd={() => { setDragPlanId(null); setDragOverPlanId(null); }}
                   >
@@ -218,19 +255,10 @@ export function PlansBoardView() {
                     </button>
                   </span>
                 </header>
+                {/* v6.9.2：模块落点提升到整卡 section（含头部）；此处正文不再承担落点职责 */}
                 <div
                   className="iw-plan-card-body"
                   data-testid={`iw-plan-card-body-${plan.id}`}
-                  onDragOver={(e) => {
-                    if (!dragPlanId || dragPlanId === plan.id) return;
-                    e.preventDefault();
-                    setDragOverPlanId(plan.id);
-                  }}
-                  onDrop={(e) => {
-                    if (!dragPlanId) return;
-                    e.preventDefault();
-                    onPlanDrop(plan.id);
-                  }}
                 >
                   {members.length === 0 ? (
                     <div className="iw-field-hint" data-testid={`iw-plan-card-empty-${plan.id}`}>
@@ -245,12 +273,6 @@ export function PlansBoardView() {
                             key={r.id}
                             className={`iw-plan-member${isOver ? ' iw-plan-member-over' : ''}`}
                             data-testid={`iw-plan-card-row-${plan.id}-${r.id}`}
-                            draggable
-                            onDragStart={(e) => {
-                              setDragMember({ planId: plan.id, recordId: r.id });
-                              e.dataTransfer?.setData('text/plain', String(r.id));
-                            }}
-                            onDragEnd={() => { setDragMember(null); setDragOverMember(null); }}
                             onDragOver={(e) => {
                               if (!dragMember || dragMember.planId !== plan.id) return;
                               e.preventDefault();
@@ -268,6 +290,24 @@ export function PlansBoardView() {
                               setCtxMenu({ planId: plan.id, recordId: r.id, x: e.clientX, y: e.clientY });
                             }}
                           >
+                            {/* v6.9.2：条目拖拽只绑在明确手柄上，行内文本可选中复制、不再参与拖拽 */}
+                            <span
+                              className="iw-plan-member-handle"
+                              draggable
+                              data-testid={`iw-plan-member-drag-${plan.id}-${r.id}`}
+                              title="拖动调整记录顺序"
+                              onDragStart={(e) => {
+                                setDragMember({ planId: plan.id, recordId: r.id });
+                                if (e.dataTransfer) {
+                                  e.dataTransfer.setData('text/plain', String(r.id));
+                                  e.dataTransfer.effectAllowed = 'move';
+                                  e.dataTransfer.setDragImage(e.currentTarget.parentElement ?? e.currentTarget, 12, 12);
+                                }
+                              }}
+                              onDragEnd={() => { setDragMember(null); setDragOverMember(null); }}
+                            >
+                              ⠿
+                            </span>
                             <span className="iw-plan-member-id">#{r.id}</span>
                             <span className="iw-plan-member-name">{String(r.名称 ?? '')}</span>
                             <span className="iw-plan-member-brand">{String(r.品牌 ?? '')}</span>

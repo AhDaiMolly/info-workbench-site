@@ -695,11 +695,22 @@
   border-bottom: 1px solid var(--iw-border, #e5e7eb);
   background: var(--iw-surface-2, #f8fafc);
 }
+/* v6.9.2 拖拽手柄：放大命中区，命中手柄才发起拖拽 */
 .iw-plan-handle {
   cursor: grab; user-select: none; color: var(--iw-text-3, #94a3b8);
-  font-size: 15px; line-height: 1; padding: 2px 3px;
+  font-size: 15px; line-height: 1; padding: 6px 8px; margin-left: -6px;
+  border-radius: 6px; flex: 0 0 auto;
 }
+.iw-plan-handle:hover { color: var(--iw-text-1, #1f2937); background: var(--iw-surface-2, #f1f5f9); }
 .iw-plan-handle:active { cursor: grabbing; }
+/* v6.9.2 条目行手柄：行内文本（名称/品牌）不参与拖拽、可选中复制 */
+.iw-plan-member-handle {
+  cursor: grab; user-select: none; color: var(--iw-text-3, #94a3b8);
+  font-size: 13px; line-height: 1; padding: 3px 4px; margin-left: -4px;
+  border-radius: 4px; flex: 0 0 auto; align-self: center;
+}
+.iw-plan-member-handle:hover { color: var(--iw-text-1, #1f2937); }
+.iw-plan-member-handle:active { cursor: grabbing; }
 .iw-plan-card-title {
   font-size: 14px; font-weight: 600; margin: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

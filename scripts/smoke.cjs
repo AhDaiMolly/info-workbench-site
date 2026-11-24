@@ -1854,7 +1854,7 @@ function apiPayload(name, buf) {
         noEditBtn67 && noEditText67 && hasRenameModal67 && renameOk67 && membersUnchanged67,
         `编辑按钮不存在=${noEditBtn67}，模块无「编辑」文本=${noEditText67}，重命名弹层=${hasRenameModal67}，重命名后标题=「${renamedTitle67}」，名称写回=${renameOk67}，成员不变=${membersUnchanged67}`);
 
-      // 需求 6：拖拽清单顺序（把新清单拖到第一份清单的位置）
+      // 需求 6：拖拽清单顺序（把新清单拖到第一份清单的位置；v6.9.2 起落点是整卡，从手柄发起）
       await navHash('#/plans');
       const orderBefore = (await cachePlans()).map((p) => p.id);
       const targetPlanId = orderBefore.find((id) => id !== newPlanId67);
@@ -1862,18 +1862,18 @@ function apiPayload(name, buf) {
       const expectedOrder = orderBefore.slice();
       expectedOrder.splice(expectedOrder.indexOf(newPlanId67), 1);
       expectedOrder.splice(movedTo67, 0, newPlanId67);
-      await dragAndDrop(`[data-testid="iw-plan-drag-${newPlanId67}"]`, `[data-testid="iw-plan-card-body-${targetPlanId}"]`);
+      await dragAndDrop(`[data-testid="iw-plan-drag-${newPlanId67}"]`, `[data-testid="iw-plan-card-${targetPlanId}"]`);
       const orderAfter = (await cachePlans()).map((p) => p.id);
       record('v6.7-7 拖拽清单模块调整排列顺序（顺序写回清单数据）',
         JSON.stringify(orderAfter) === JSON.stringify(expectedOrder),
         `拖前=[${orderBefore.join('>')}]，期望=[${expectedOrder.join('>')}]，实际=[${orderAfter.join('>')}]`);
 
-      // 需求 7：拖拽清单内记录顺序（两条成员互换）
+      // 需求 7：拖拽清单内记录顺序（两条成员互换；v6.9.2 起从行手柄发起）
       const membersBefore = ((await cachePlans()).find((p) => p.id === newPlanId67) || { members: [] }).members;
       const bodyVisible67 = await page.evaluate((pid) => Boolean(document.querySelector(`[data-testid="iw-plan-card-body-${pid}"]`)), newPlanId67);
       if (bodyVisible67 && membersBefore.length === 2) {
         await dragAndDrop(
-          `[data-testid="iw-plan-card-row-${newPlanId67}-${membersBefore[0]}"]`,
+          `[data-testid="iw-plan-member-drag-${newPlanId67}-${membersBefore[0]}"]`,
           `[data-testid="iw-plan-card-row-${newPlanId67}-${membersBefore[1]}"]`,
         );
         const membersAfter = ((await cachePlans()).find((p) => p.id === newPlanId67) || { members: [] }).members;
@@ -1882,6 +1882,59 @@ function apiPayload(name, buf) {
           `拖前=${JSON.stringify(membersBefore)}，实际=${JSON.stringify(membersAfter)}`);
       } else {
         record('v6.7-8 拖拽清单内记录调整记录顺序', false, `模块不可见=${!bodyVisible67}，成员数=${membersBefore.length}`);
+      }
+
+      // v6.9.2：拖拽修复 —— 只手柄可拖、文本拖拽被取消（不再弹「搜索文本」）
+      {
+        const dragFix = await page.evaluate((pid, rid) => {
+          const handle = document.querySelector(`[data-testid="iw-plan-drag-${pid}"]`);
+          const memberHandle = document.querySelector(`[data-testid="iw-plan-member-drag-${pid}-${rid}"]`);
+          const card = document.querySelector(`[data-testid="iw-plan-card-${pid}"]`);
+          const title = document.querySelector(`[data-testid="iw-plan-card-title-${pid}"]`);
+          const row = document.querySelector(`[data-testid="iw-plan-card-row-${pid}-${rid}"]`);
+          const dragAttr = (el) => (el ? el.getAttribute('draggable') : 'missing');
+          const probe = (el) => {
+            let prevented = null;
+            const l = (e) => { prevented = e.defaultPrevented; };
+            document.addEventListener('dragstart', l);
+            try {
+              el.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+            } finally {
+              document.removeEventListener('dragstart', l);
+            }
+            return prevented;
+          };
+          return {
+            planHandleDraggable: dragAttr(handle),
+            memberHandleDraggable: dragAttr(memberHandle),
+            cardDraggable: dragAttr(card),
+            titleDraggable: dragAttr(title),
+            rowDraggable: dragAttr(row),
+            titleDragPrevented: probe(title),
+            rowDragPrevented: probe(row),
+            handleDragPrevented: probe(handle),
+            memberHandleDragPrevented: probe(memberHandle),
+          };
+        }, newPlanId67, ((membersBefore[0] !== undefined) ? membersBefore[0] : 1));
+        // 探针触发过 dragstart，补发 dragend 复位组件内拖拽态，避免影响后续用例
+        await page.evaluate((pid, rid) => {
+          const mk = (el) => el && el.dispatchEvent(new DragEvent('dragend', { bubbles: true }));
+          mk(document.querySelector(`[data-testid="iw-plan-drag-${pid}"]`));
+          mk(document.querySelector(`[data-testid="iw-plan-member-drag-${pid}-${rid}"]`));
+        }, newPlanId67, ((membersBefore[0] !== undefined) ? membersBefore[0] : 1));
+        record('v6.9.2-1 拖拽只绑手柄：手柄 draggable=true，模块卡/标题/条目行均无 draggable',
+          dragFix.planHandleDraggable === 'true'
+            && dragFix.memberHandleDraggable !== 'missing'
+            && dragFix.cardDraggable === null
+            && dragFix.titleDraggable === null
+            && dragFix.rowDraggable === null,
+          `模块手柄=${dragFix.planHandleDraggable}，条目手柄=${dragFix.memberHandleDraggable}，卡=${dragFix.cardDraggable}，标题=${dragFix.titleDraggable}，行=${dragFix.rowDraggable}`);
+        record('v6.9.2-2 非手柄文本发起 dragstart 被取消，手柄发起不被拦（不弹搜索文本）',
+          dragFix.titleDragPrevented === true
+            && dragFix.rowDragPrevented === true
+            && dragFix.handleDragPrevented === false
+            && dragFix.memberHandleDragPrevented === false,
+          `标题拖拽取消=${dragFix.titleDragPrevented}，条目行拖拽取消=${dragFix.rowDragPrevented}，模块手柄放行=${!dragFix.handleDragPrevented}，条目手柄放行=${!dragFix.memberHandleDragPrevented}`);
       }
 
       // 需求 5：删除 —— 二次确认，只解除关联不删记录
