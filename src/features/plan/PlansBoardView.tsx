@@ -271,20 +271,7 @@ export function PlansBoardView() {
                             <span className="iw-plan-member-id">#{r.id}</span>
                             <span className="iw-plan-member-name">{String(r.名称 ?? '')}</span>
                             <span className="iw-plan-member-brand">{String(r.品牌 ?? '')}</span>
-                            {/* v6.9（需求 4）：条目「移出」按钮（右键菜单保留同一入口；v6.8 悬停 × 已移除） */}
-                            <button
-                              className="iw-btn iw-btn-sm iw-btn-ghost iw-plan-member-remove"
-                              type="button"
-                              data-testid={`iw-plan-member-remove-${plan.id}-${r.id}`}
-                              aria-label={`移出清单：${String(r.名称 ?? '')}`}
-                              title={`移出清单：${String(r.名称 ?? '')}`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                app.actions.toggleRecordInPlan(plan.id, r.id);
-                              }}
-                            >
-                              移出
-                            </button>
+                            {/* v6.9.1：常显「移出」按钮已删除，移出统一走条目右键菜单「移出清单」 */}
                           </li>
                         );
                       })}

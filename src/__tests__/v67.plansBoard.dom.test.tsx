@@ -18,7 +18,7 @@
  *   10. 「新增清单」弹层简化为只填名称（创建为空清单），无搜索 / 筛选 / 挑选内容；
  *   11. 模块右上「＋ 添加记录」入口跳转挑选页（#/plan-add/:id）；
  *   12. 条目右键菜单新增「加入其他清单…」（迁移语义：加入目标并从当前移出）；
- *   13. 条目改为常显「移出」按钮（v6.8 悬停「×」按钮已删除）。
+ *   13. v6.9.1：条目常显「移出」按钮已删除；移出统一走右键菜单「移出清单」（v6.8 悬停「×」按钮亦不存在）。
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -277,7 +277,7 @@ describe('v6.8 · 清单名后的编辑图标（只重命名）', () => {
   });
 });
 
-describe('v6.8/v6.9 · 条目移出清单（右键菜单 + 移出按钮）', () => {
+describe('v6.8/v6.9 · 条目移出清单（右键菜单为唯一入口）', () => {
   it('条目右键 → 弹出菜单含「移出清单」与「加入其他清单…」；点移出回调 toggleRecordInPlan 且不跳详情页', () => {
     render(<PlansBoardView />);
     const row = screen.getByTestId('iw-plan-card-row-p1-1');
@@ -298,12 +298,16 @@ describe('v6.8/v6.9 · 条目移出清单（右键菜单 + 移出按钮）', () 
     expect(holder.toggleRecordInPlan).not.toHaveBeenCalled();
   });
 
-  it('v6.9：条目上常显「移出」按钮 → 回调 toggleRecordInPlan 且不触发条目点击（跳详情）', () => {
+  it('v6.9.1：条目上无常显「移出」按钮；右键「移出清单」可用，回调 toggleRecordInPlan 且不触发跳详情', () => {
     render(<PlansBoardView />);
-    const btn = screen.getByTestId('iw-plan-member-remove-p1-2');
-    expect(btn.getAttribute('aria-label')).toBe('移出清单：百褶裙');
-    expect(btn.textContent).toBe('移出');
-    fireEvent.click(btn);
+    // 常显「移出」按钮已删除（v6.9.1）：任何成员条目上都不渲染
+    expect(screen.queryByTestId('iw-plan-member-remove-p1-1')).toBeNull();
+    expect(screen.queryByTestId('iw-plan-member-remove-p1-2')).toBeNull();
+    expect(screen.queryByTestId('iw-plan-member-remove-p2-3')).toBeNull();
+    // 移出能力统一走右键菜单
+    fireEvent.contextMenu(screen.getByTestId('iw-plan-card-row-p1-2'));
+    expect(screen.getByTestId('iw-plan-ctx-remove').textContent).toBe('移出清单');
+    fireEvent.click(screen.getByTestId('iw-plan-ctx-remove'));
     expect(holder.toggleRecordInPlan).toHaveBeenCalledWith('p1', 2);
     expect(holder.navigateMock).not.toHaveBeenCalled();
   });

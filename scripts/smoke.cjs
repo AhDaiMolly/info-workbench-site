@@ -1950,7 +1950,7 @@ function apiPayload(name, buf) {
           && afterCtx68.recordAlive && afterCtx68.rowGone,
         `右键触发=${ctxOk68}，菜单含「移出清单」=${ctxMenu68}，成员表=${JSON.stringify(afterCtx68.members)}，记录存在=${afterCtx68.recordAlive}，模块条目已移除=${afterCtx68.rowGone}`);
 
-      // 经详情页 chip 加回，再验证入口二：v6.9 条目常显「移出」按钮（v6.8 悬停 × 已删除）
+      // 经详情页 chip 加回，再验证 v6.9.1：常显「移出」按钮已删除，右键「移出清单」仍可用
       await goto(`#/detail/${rid68}`);
       await new Promise((r) => setTimeout(r, 800));
       const readd68 = await page.evaluate(() => {
@@ -1962,13 +1962,19 @@ function apiPayload(name, buf) {
       await new Promise((r) => setTimeout(r, 700));
       await navHash('#/plans');
       const xBtnGone68 = await page.evaluate((pid, rid) => !document.querySelector(`[data-testid="iw-plan-card-remove-${pid}-${rid}"]`), spring68.id, rid68);
-      const removeBtn68 = await page.evaluate((pid, rid) => {
-        const b = document.querySelector(`[data-testid="iw-plan-member-remove-${pid}-${rid}"]`);
-        if (!b) return null;
-        const label = b.getAttribute('aria-label') || '';
-        b.click();
-        return { label };
+      const removeBtnGone691 = await page.evaluate((pid, rid) => !document.querySelector(`[data-testid="iw-plan-member-remove-${pid}-${rid}"]`), spring68.id, rid68);
+      const ctxOk691 = await page.evaluate((pid, rid) => {
+        const row = document.querySelector(`[data-testid="iw-plan-card-row-${pid}-${rid}"]`);
+        if (!row) return false;
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 160, clientY: 180 }));
+        return true;
       }, spring68.id, rid68);
+      await new Promise((r) => setTimeout(r, 500));
+      const ctxRemove691 = await page.evaluate(() => {
+        const b = document.querySelector('[data-testid="iw-plan-ctx-remove"]');
+        if (b) { b.click(); return (b.textContent || '').trim(); }
+        return null;
+      });
       await new Promise((r) => setTimeout(r, 700));
       const afterX68 = await page.evaluate((pid, rid) => {
         const c = JSON.parse(localStorage.getItem('iw.cache') || '{}');
@@ -1978,10 +1984,10 @@ function apiPayload(name, buf) {
           recordAlive: (c.records || []).some((r) => r.id === rid),
         };
       }, spring68.id, rid68);
-      record('v6.8-2b/v6.9-4·6 条目「移出」按钮移出清单（v6.8 悬停 × 已删除，记录本身保留）',
-        readd68 && xBtnGone68 && Boolean(removeBtn68) && removeBtn68.label.includes('移出清单')
+      record('v6.8-2b/v6.9.1-4 条目常显「移出」按钮已删除；右键「移出清单」移出且记录本身保留',
+        readd68 && xBtnGone68 && removeBtnGone691 && ctxOk691 && ctxRemove691 === '移出清单'
           && Array.isArray(afterX68.members) && !afterX68.members.includes(rid68) && afterX68.recordAlive,
-        `加回=${readd68}，×按钮已删除=${xBtnGone68}，移出按钮 aria-label=「${removeBtn68 ? removeBtn68.label : '未找到'}」，成员表=${JSON.stringify(afterX68.members)}，记录存在=${afterX68.recordAlive}`);
+        `加回=${readd68}，×按钮已删除=${xBtnGone68}，常显移出按钮已删除=${removeBtnGone691}，右键触发=${ctxOk691}，菜单项=「${ctxRemove691 || '未找到'}」，成员表=${JSON.stringify(afterX68.members)}，记录存在=${afterX68.recordAlive}`);
 
       // 列表页即时一致：清单列不含该记录、整行由不填色转浅黄（在清单→不在清单的填色翻转边界）
       await goto(`#/list?q=${encodeURIComponent('#' + rid68)}`);

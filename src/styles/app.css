@@ -720,8 +720,6 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .iw-plan-member-brand { color: var(--iw-text-3, #94a3b8); font-size: 12px; flex: 0 0 auto; }
-/* v6.9（需求 4）：条目「移出」按钮（替代 v6.8 悬停 × 入口；右键菜单保留同一操作） */
-.iw-plan-member-remove { flex: 0 0 auto; align-self: center; }
 /* v6.9（需求 5）：右键菜单「加入其他清单」项 —— 非危险色 */
 .iw-plan-ctx-menu button.iw-plan-ctx-move { color: var(--iw-text-1, #1f2937); }
 /* v6.9（需求 5）：「加入其他清单」弹层里的目标清单候选列表 */
